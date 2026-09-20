@@ -60,6 +60,9 @@ function saveSettings(s) {
   const tmp = SETTINGS_FILE + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(s, null, 2), "utf8");
   fs.renameSync(tmp, SETTINGS_FILE);
+  try {
+    require("./cloudBackup").pushSoon();
+  } catch {}
 }
 
 module.exports = { loadSettings, saveSettings, clampInterval, validTimezone, THEME_IDS };

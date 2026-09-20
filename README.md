@@ -28,11 +28,21 @@ Keep your **Naukri.com** profile fresh on autopilot — rotating **Resume Headli
 ## 🚀 Deploy to Render (1 click)
 
 1. Click **Deploy to Render** above (uses the included `render.yaml` blueprint).
-2. When asked, set **one** environment variable:
-   - `WEB_PASSWORD` → your dashboard password (pick something strong)
-3. Open your service URL → log in → add your first profile. Done!
+2. When asked, set your environment variables:
+   - `WEB_PASSWORD` → your dashboard password (pick something strong) — **required**
+   - `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` → free Upstash Redis REST credentials (see below) — **optional, enables cloud backup**
+3. Open your service URL → log in → add your first profile. Done! Check Render **Logs** on boot — a restored deploy prints `restored from cloud: profiles=true…`.
 
-> ⚠️ **Render free-tier note:** files live on ephemeral disk — added profiles, WhatsApp link and settings are wiped on redeploy/restart. For persistence, attach a **Render Disk** mounted at `/opt/render/project/src` (paid), or run it at home with Node.
+> ⚠️ **Render free-tier note:** files live on ephemeral disk — added profiles, WhatsApp link and settings are wiped on redeploy/restart. Fix it free with **cloud backup** below, attach a paid **Render Disk** mounted at `/opt/render/project/src`, or run it at home with Node.
+
+### ☁️ Free cloud backup (survive wipes)
+
+1. Create a **free** Redis database at [upstash.com](https://upstash.com) (Regional, any nearby region).
+2. Open it → **REST API** tab → copy the **Endpoint** and **Token**.
+3. Add them as environment variables (Render Dashboard → Environment, and/or local `.env`):
+   - `UPSTASH_REDIS_REST_URL` → the endpoint
+   - `UPSTASH_REDIS_REST_TOKEN` → the token
+4. Done. The app auto-backs-up profiles, settings, resume/title files and the WhatsApp link, and **restores everything itself** after a wipe. Watch it in dashboard Settings → *Cloud backup* (with a manual **Backup now** button).
 
 ---
 
@@ -115,7 +125,7 @@ Your browser cached the previous page. Hard-refresh once:
 This matters most on Render after a redeploy — e.g. a missing section means you're looking at the cached page; hard-refresh to reveal it. (The server now sends `no-store` headers, so fresh loads never go stale — only that one hard refresh is needed.)
 
 **"No visible browser on this server"?**
-Expected on Render/cloud (no screen, no Chrome). Use the **Server login** form right below that message: enter Naukri email + password once (never stored) — a headless browser logs in, captures the session, and supports OTP codes if Naukri asks.
+Expected on Render/cloud (no screen, no Chrome): link profiles with **email + password** or pasted **session cookies** (steps in the dashboard) — a headless server can't open login windows.
 
 ---
 

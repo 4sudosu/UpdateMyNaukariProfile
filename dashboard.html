@@ -258,6 +258,12 @@
       <div><label>&nbsp;</label><button class="ghost" onclick="saveTimezone()">Save timezone</button></div>
     </div>
     <div id="tzMsg" class="msg"></div>
+    <label>Cloud backup — survives Render wipes (free Upstash Redis)</label>
+    <div class="muted" id="cloudStatus">Loading…</div>
+    <div class="row">
+      <div><label>&nbsp;</label><button class="ghost" onclick="cloudBackupNow()">Backup now</button></div>
+    </div>
+    <div id="cloudMsg" class="msg"></div>
     <label>Theme — 10 combinations, light &amp; dark (applies instantly)</label>
     <div class="swatches" id="themeSwatches"></div>
     <div id="setMsg" class="msg"></div>
@@ -469,6 +475,15 @@ async function refresh(){
     let s = "Status: " + (!wa.enabled ? "OFF" : wa.connected ? "CONNECTED" : wa.qrPending ? "waiting for scan…" : "connecting…");
     if(wa.connected){ s += "  |  Linked: +" + (wa.phone || "?"); if(acc.accountName) s += " (" + acc.accountName + ")"; }
     document.getElementById("waStatus").textContent = s;
+    const cb = document.getElementById("cloudStatus");
+    if(cb) {
+      const c = j.cloud || {};
+      cb.textContent = !c.enabled
+        ? "Off — set UPSTASH_REDIS_REST_URL + TOKEN to survive Render wipes."
+        : "On — last push: " + (c.lastPush ? new Date(c.lastPush).toLocaleString() : "pending")
+          + " | last restore: " + (c.lastPull ? new Date(c.lastPull).toLocaleString() : "—")
+          + (c.error ? " | ERROR: " + c.error : "");
+    }
     document.getElementById("waPill").outerHTML = waPill(wa).replace('class="pill', 'id="waPill" class="pill');
     const we = document.getElementById("waEnabled");
     if(document.activeElement !== we) we.value = wa.enabled ? "on" : "off";
@@ -751,6 +766,14 @@ async function saveTimezone(){
   try{
     const j = await api("PUT","/api/settings",{ timezone:document.getElementById("setTz").value.trim() });
     m.className="msg ok"; m.textContent="Timezone saved: "+j.timezone+". All profiles re-anchored.";
+    lastSig=""; refresh();
+  }catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
+}
+async function cloudBackupNow(){
+  const m = document.getElementById("cloudMsg"); m.className="msg"; m.textContent="Backing up…";
+  try{
+    await api("POST","/api/cloud/backup-now",{});
+    m.className="msg ok"; m.textContent="Backed up to cloud.";
     lastSig=""; refresh();
   }catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
 }

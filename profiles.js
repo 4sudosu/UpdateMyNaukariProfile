@@ -71,6 +71,9 @@ function saveRegistry(reg) {
   const tmp = REGISTRY_FILE + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(reg, null, 2), "utf8");
   fs.renameSync(tmp, REGISTRY_FILE);
+  try {
+    require("./cloudBackup").pushSoon();
+  } catch {}
 }
 
 function getProfile(reg, id) {

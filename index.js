@@ -26,6 +26,7 @@ const crypto = require("crypto");
 const profiles = require("./profiles");
 const wa = require("./whatsapp");
 const bl = require("./browserLogin");
+const cloudBackup = require("./cloudBackup");
 
 // Never die silently on a stray rejection — log and keep serving.
 process.on("unhandledRejection", (e) => {
@@ -1080,6 +1081,7 @@ const server = http.createServer(async (req, res) => {
       settings: { intervalHours: settings.intervalHours, theme: settings.theme, timezone: settings.timezone, whatsapp: settings.whatsapp },
       locked: panelLocked,
       wa: wa.getStatus(),
+      cloud: cloudBackup.getStatus(),
       profiles: reg.profiles.map(publicProfile),
     });
     return;
@@ -1577,9 +1579,21 @@ const server = http.createServer(async (req, res) => {
     if (url === "/api/whatsapp/unlink" && req.method === "POST") {
       try {
         await wa.unlinkWhatsApp();
+        await cloudBackup.dropWaCloud().catch(() => {});
         sendJson(res, 200, { ok: true, unlinked: true });
       } catch (e) {
         sendJson(res, 500, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    // POST /api/cloud/backup-now — push everything to cloud backup immediately
+    if (url === "/api/cloud/backup-now" && req.method === "POST") {
+      try {
+        const r = await cloudBackup.pushAll();
+        sendJson(res, 200, { ok: true, ...r, status: cloudBackup.getStatus() });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
       }
       return;
     }
@@ -1632,8 +1646,25 @@ const server = http.createServer(async (req, res) => {
 });
 
 // ---------- boot ----------
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   log(`Server listening on port ${PORT}`);
+  // Cloud restore FIRST (fresh deploy with empty disk pulls everything back).
+  if (cloudBackup.isEnabled()) {
+    try {
+      const r = await cloudBackup.pullMissing();
+      if (r.pulled && (r.restored.profiles || r.restored.settings || r.restored.wa)) {
+        const freshReg = profiles.loadRegistry();
+        reg.profiles = freshReg.profiles;
+        Object.assign(settings, settingsStore.loadSettings());
+        wa.configure({ enabled: settings.whatsapp.enabled });
+      }
+    } catch (e) {
+      log("Cloud restore failed (continuing local-only):", e.message);
+    }
+    setInterval(() => {
+      cloudBackup.pushAll().catch((e) => log("Periodic cloud push failed:", e.message));
+    }, 30 * 60 * 1000);
+  }
   if (WEB_PASSWORD) log("Dashboard at / requires panel login (12h session token)");
   else log("WARNING: WEB_PASSWORD is empty — NOBODY can log in until you set it in .env and restart");
   log(`Default rhythm Every ${settings.intervalHours}h — each profile sets its own schedule on its card`);
