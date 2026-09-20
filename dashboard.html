@@ -173,14 +173,7 @@
     </div>
     <div class="muted">Login is saved as session cookies — no passwords are stored.</div>
     <div class="muted" id="fCaptureNote">No session captured yet — capture one with <b>Server login</b> above or <b>Login via Browser</b> below, then press <b>Add profile</b>.</div>
-  <div class="card" style="background:var(--ghostbg);border-color:var(--cardbrd)">
-    <div id="browserWindowBlock">
-      <b>No password, no copy-paste?</b> <span class="muted">Log in inside a real Chrome window — the session is captured automatically, then the profile is added. (Needs a screen + Chrome — your own computer.)</span><br>
-      <button class="teal" id="btnWindowLogin" onclick="browserLoginNew()">Login via Browser</button>
-      <button class="ghost" onclick="browserCancel()">Cancel</button>
-      <div class="muted" id="chromeNote"></div>
-      <div id="browserMsg" class="msg"></div>
-    </div>
+  <div class="card" id="browserCard" style="background:var(--ghostbg);border-color:var(--cardbrd)">
     <div id="browserHeadlessBlock">
       <b>Server login</b> <span class="muted">works everywhere incl. Render — enter Naukri creds once (never stored). A headless browser logs in, captures the session, then the profile is added.</span>
       <div class="row">
@@ -417,6 +410,8 @@ function toggleAddAuth(){
   const t = document.getElementById("fAuth").value;
   document.getElementById("fPassWrap").style.display = t === "password" ? "block" : "none";
   document.getElementById("fServerWrap").style.display = t === "server" ? "block" : "none";
+  const bc = document.getElementById("browserCard");
+  if(bc) bc.style.display = t === "server" ? "block" : "none";
 }
 function goServerLogin(){
   window._bhProfile = null; // capture lands in this add form
@@ -792,7 +787,8 @@ async function browserCancel(){
   try{ await api("POST","/api/browser/cancel",{}); }catch(e){}
   if(browserTimer){ clearInterval(browserTimer); browserTimer = null; }
   window._bhProfile = null; showOtpBox(false);
-  document.getElementById("browserMsg").textContent = "Cancelled.";
+  const bm = document.getElementById("browserMsg");
+  if(bm) bm.textContent = "Cancelled.";
   const h = document.getElementById("browserMsgH");
   if(h) h.textContent = "Cancelled.";
 }
@@ -835,19 +831,6 @@ async function browserHeadlessOtp(){
     document.getElementById("bhOtp").value = "";
     msg.textContent = "Code submitted — watching result…";
   }catch(e){ msg.textContent = "Error: "+e.message; }
-}
-async function adaptBrowserUI(){
-  try{
-    const s = await api("GET","/api/browser/status");
-    const b = s.browser || {};
-    const headed = b.headed !== false;
-    const btn = document.getElementById("btnWindowLogin");
-    const note = document.getElementById("chromeNote");
-    if(btn) btn.disabled = !headed;
-    if(note) note.textContent = headed
-      ? "System Chrome detected on this server — window login available."
-      : "No Chrome/display on this server — window login unavailable, use Server login below.";
-  }catch(e){}
 }
 function toggleTestCreds() {
   const email = document.getElementById("fEmail").value.trim();
@@ -972,27 +955,14 @@ async function clearAllSessions() {
     msg.className = "msg err"; msg.textContent = "Error: " + e.message;
   }
 }
-function browserLoginNew(){
-  const msg = document.getElementById("browserMsg");
-  const nm = document.getElementById("fName").value.trim() || "new profile";
-  browserBegin("new", nm,
-    (cookies)=>{
-      window._capturedCookies = cookies || {};
-      const names = Object.keys(window._capturedCookies).filter(k=>window._capturedCookies[k]);
-      document.getElementById("fAuth").value = "server"; toggleAddAuth();
-      const note = document.getElementById("fCaptureNote");
-      if(note) note.textContent = "Session captured ("+names.join(", ")+") — press Add profile below to save it.";
-      msg.textContent = "Session captured ("+names.join(", ")+").";
-    },
-    (err)=>{ msg.textContent = "Browser login failed: "+err; },
-    msg);
-}
 function browserLoginRefresh(id){
   const m = document.getElementById("m-"+id);
   api("GET","/api/browser/status").then(s=>{
     if(s.browser && s.browser.headed === false){
       window._bhProfile = { id };
-      m.textContent = "This server has no screen — use the headless login in the Add section (session will save to this card).";
+      const bc = document.getElementById("browserCard");
+      if(bc) bc.style.display = "block";
+      m.textContent = "This server has no screen — use Server login below (session will save to this card).";
       document.getElementById("browserHeadlessBlock").scrollIntoView({behavior:"smooth",block:"center"});
       return;
     }
@@ -1012,7 +982,8 @@ function browserLoginRefresh(id){
 /* ---------- boot: nothing visible without login ---------- */
 buildSwatches();
 applyTheme(currentTheme(), false);
-if(token()){ refresh(); adaptBrowserUI(); } else { showLogin(); }
+toggleAddAuth(); // email+pass is default: browser card starts hidden
+if(token()){ refresh(); } else { showLogin(); }
 setInterval(refresh,10000); setInterval(tick,1000);
 </script>
 </body>

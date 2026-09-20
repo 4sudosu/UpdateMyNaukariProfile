@@ -112,7 +112,7 @@ Your browser cached the previous page. Hard-refresh once:
 - Windows/Linux: **CTRL + SHIFT + R**
 - Mac: **CMD + SHIFT + R**
 
-This matters most on Render after a redeploy — e.g. seeing only *Login via Browser* with *"No visible browser on this server"* means you're looking at the cached page; hard-refresh to reveal the **Server login** form. (The server now sends `no-store` headers, so fresh loads never go stale — only that one hard refresh is needed.)
+This matters most on Render after a redeploy — e.g. a missing **Server login** form means you're looking at the cached page; hard-refresh to reveal it. (The server now sends `no-store` headers, so fresh loads never go stale — only that one hard refresh is needed.)
 
 **"No visible browser on this server"?**
 Expected on Render/cloud (no screen, no Chrome). Use the **Server login** form right below that message: enter Naukri email + password once (never stored) — a headless browser logs in, captures the session, and supports OTP codes if Naukri asks.
