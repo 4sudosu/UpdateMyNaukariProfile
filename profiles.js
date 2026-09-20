@@ -51,6 +51,7 @@ function loadRegistry() {
             : normalizeAuth({ method: "password", email: p.email, password: p.password }),
           notify: normalizeNotify(p.notify),
           tasks: normalizeTasks(p.tasks),
+          schedule: normalizeSchedule(p.schedule),
           titleIndex: Number.isInteger(p.titleIndex) && p.titleIndex >= 0 ? p.titleIndex : 0,
           lastRun: typeof p.lastRun === "string" ? p.lastRun : null,
           lastStatus: typeof p.lastStatus === "string" ? p.lastStatus : "never run",
@@ -121,6 +122,29 @@ function normalizeAuth(input) {
     password: String(src.password || ""),
     cookies: { nauk_at: "", nauk_sid: "", nauk_rt: "" },
   };
+}
+
+function parseHM(s) {
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((s || "").trim());
+  return m ? { h: +m[1], m: +m[2], mins: +m[1] * 60 + +m[2] } : null;
+}
+
+// Daily schedule: interval (global Xh) | fixed time | random moment in window.
+// Times are server-local HH:MM (24h).
+function normalizeSchedule(s) {
+  const mode = s && (s.mode === "daily" || s.mode === "window") ? s.mode : "interval";
+  if (mode === "daily") {
+    if (!parseHM(s.time)) throw new Error("Daily time must be HH:MM (24h), e.g. 09:00");
+    return { mode, time: s.time.trim(), from: "", to: "" };
+  }
+  if (mode === "window") {
+    const f = parseHM(s.from);
+    const t = parseHM(s.to);
+    if (!f || !t) throw new Error("Window needs From and To times (HH:MM, 24h)");
+    if (f.mins >= t.mins) throw new Error("Window start must be before end (same day)");
+    return { mode, from: s.from.trim(), to: s.to.trim(), time: "" };
+  }
+  return { mode: "interval", time: "", from: "", to: "" };
 }
 
 // Which updates a profile wants each cycle: Title and/or Resume (at least one).
@@ -210,7 +234,7 @@ function isPdfBuffer(buf) {
 }
 
 // Add a profile + write its two files. Throws with a friendly message.
-function addProfile(reg, { name, auth, tasks, titlesText, titlesOrigName, resumeBuffer, resumeOrigName, notify }) {
+function addProfile(reg, { name, auth, tasks, schedule, titlesText, titlesOrigName, resumeBuffer, resumeOrigName, notify }) {
   const cleanName = (name || "").trim();
   if (!cleanName) throw new Error("Profile Name is required");
   const safe = safeName(cleanName);
@@ -220,6 +244,7 @@ function addProfile(reg, { name, auth, tasks, titlesText, titlesOrigName, resume
   }
   const finalAuth = buildAuth(auth);
   const finalTasks = normalizeTasks(tasks);
+  const finalSchedule = normalizeSchedule(schedule);
 
   const titles = (titlesText || "")
     .split("\n")
@@ -243,6 +268,7 @@ function addProfile(reg, { name, auth, tasks, titlesText, titlesOrigName, resume
     auth: finalAuth, // { method: 'password'|'cookies', ... } — stored on YOUR server only
     notify: validateNotify(notify),
     tasks: finalTasks,
+    schedule: finalSchedule,
     titleIndex: 0,
     lastRun: null,
     lastStatus: "never run",
@@ -285,6 +311,14 @@ function updateTasks(reg, id, tasks) {
   const p = getProfile(reg, id);
   if (!p) throw new Error("Profile not found");
   p.tasks = normalizeTasks(tasks);
+  saveRegistry(reg);
+  return p;
+}
+
+function updateSchedule(reg, id, schedule) {
+  const p = getProfile(reg, id);
+  if (!p) throw new Error("Profile not found");
+  p.schedule = normalizeSchedule(schedule);
   saveRegistry(reg);
   return p;
 }
@@ -335,6 +369,7 @@ module.exports = {
   setAuth,
   updateFiles,
   updateTasks,
+  updateSchedule,
   clearCookies,
   readProfileTitles,
   titlesPath,

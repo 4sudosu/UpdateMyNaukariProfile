@@ -644,11 +644,73 @@ function enqueueProfileRun(id) {
   return task;
 }
 
-// Run once via the queue, then reschedule 18h (success) or 1h (failure).
+// ---------- per-profile scheduling ----------
+// interval: every Xh from last update. daily: fixed HH:MM. window: random moment in [from, to].
+// All times are server-local. A missed slot runs ONCE (no catch-up spam); daily/window run max once/day.
+function parseHM(s) {
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((s || "").trim());
+  return m ? { h: +m[1], m: +m[2], mins: +m[1] * 60 + +m[2] } : null;
+}
+function sameDay(a, b) {
+  const da = new Date(a);
+  const db = new Date(b);
+  return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
+}
+function slotToday(hm, now) {
+  const d = new Date(now);
+  d.setHours(hm.h, hm.m, 0, 0);
+  return d.getTime();
+}
+function nextDaily(timeStr, now) {
+  const t = slotToday(parseHM(timeStr), now);
+  return t <= now ? t + 86400000 : t;
+}
+function nextWindow(fromStr, toStr, lastRunMs, now) {
+  const f = parseHM(fromStr);
+  const t = parseHM(toStr);
+  if (!f || !t) return now + intervalMs(); // corrupt data: safe fallback
+  const day = new Date(now);
+  day.setHours(0, 0, 0, 0);
+  const w0 = day.getTime() + f.mins * 60000;
+  const w1 = day.getTime() + t.mins * 60000;
+  if (lastRunMs && sameDay(lastRunMs, now)) return w0 + 86400000 + Math.random() * (w1 - w0); // ran today -> tomorrow
+  if (now < w1) {
+    const lo = Math.max(now + 45000, w0);
+    if (lo < w1) return lo + Math.random() * (w1 - lo); // later today
+  }
+  return now; // window missed -> once now
+}
+// Absolute timestamp of the next run for a profile.
+function planNext(p, now) {
+  now = now || Date.now();
+  const mode = (p.schedule && p.schedule.mode) || "interval";
+  const last = p.lastRun ? Date.parse(p.lastRun) : NaN;
+  if (mode === "daily") {
+    const hm = parseHM(p.schedule.time);
+    if (!hm) return now + intervalMs();
+    if (Number.isFinite(last) && sameDay(last, now)) return nextDaily(p.schedule.time, now);
+    const t = slotToday(hm, now);
+    return t > now ? t : now;
+  }
+  if (mode === "window") {
+    return nextWindow(p.schedule.from, p.schedule.to, Number.isFinite(last) ? last : 0, now);
+  }
+  if (!Number.isFinite(last)) return now;
+  const due = last + intervalMs();
+  return due <= now ? now : due;
+}
+
+// Run once via the queue, then re-plan (success) or retry in 1h (failure).
 function cycleProfile(id) {
   return enqueueProfileRun(id).then((ok) => {
     const p = profiles.getProfile(reg, id);
-    if (p) scheduleProfile(p, ok ? intervalMs() : 60 * 60 * 1000);
+    if (!p) return ok;
+    if (ok) {
+      const t = planNext(p);
+      scheduleProfile(p, Math.max(1000, t - Date.now()));
+    } else {
+      scheduleProfile(p, 60 * 60 * 1000);
+    }
     return ok;
   });
 }
@@ -670,19 +732,13 @@ function unscheduleProfile(id) {
 }
 
 function anchorProfile(p) {
-  const last = p.lastRun ? Date.parse(p.lastRun) : NaN;
-  if (!Number.isFinite(last)) {
-    log(`[${p.name}] first run — updating once now`);
-    cycleProfile(p.id);
-    return;
-  }
-  const dueIn = last + intervalMs() - Date.now();
-  if (dueIn <= 0) {
-    log(`[${p.name}] overdue (server was off?) — updating ONCE now, no catch-up spam`);
+  const t = planNext(p);
+  if (t <= Date.now()) {
+    log(`[${p.name}] due — updating ONCE now`);
     cycleProfile(p.id);
   } else {
-    log(`[${p.name}] resuming rhythm without an immediate run`);
-    scheduleProfile(p, dueIn);
+    log(`[${p.name}] next update at ${new Date(t).toLocaleString()}`);
+    scheduleProfile(p, t - Date.now());
   }
 }
 
@@ -805,6 +861,14 @@ function panelAuth(req, body) {
   return { status: 401, body: { ok: false, error: "Login required." } };
 }
 
+// Human schedule label for the dashboard.
+function scheduleText(p) {
+  const s = p.schedule || { mode: "interval" };
+  if (s.mode === "daily") return `Daily ${s.time}`;
+  if (s.mode === "window") return `${s.from}–${s.to} daily`;
+  return `Every ${settings.intervalHours}h`;
+}
+
 // Public profile view for the dashboard (passwords never leave the server).
 function publicProfile(p) {
   const titles = profiles.readProfileTitles(p);
@@ -817,6 +881,8 @@ function publicProfile(p) {
     titlesTotal: titles.length,
     resumePresent: fs.existsSync(profiles.resumePath(p)),
     tasks: p.tasks,
+    schedule: p.schedule,
+    scheduleText: scheduleText(p),
     titleIndex: titles.length ? p.titleIndex % titles.length : 0,
     lastRun: p.lastRun,
     nextRun: nextRuns[p.id] || null,
@@ -937,6 +1003,7 @@ const server = http.createServer(async (req, res) => {
           resumeOrigName: body.resumeName,
           notify: body.notify,
           tasks: body.tasks,
+          schedule: body.schedule,
         });
         if (p.auth.method === "cookies") {
           try {
@@ -1164,6 +1231,19 @@ const server = http.createServer(async (req, res) => {
         }
         profiles.saveRegistry(reg);
         sendJson(res, 200, { ok: true, cleared });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    // PUT /api/profiles/:id/schedule — interval | daily time | random window
+    if (parts[1] === "profiles" && parts[2] && parts[3] === "schedule" && req.method === "PUT") {
+      try {
+        const p = profiles.updateSchedule(reg, parts[2], body.schedule);
+        log(`[${p.name}] schedule -> ${scheduleText(p)}`);
+        if (!running[p.id]) anchorProfile(p);
+        sendJson(res, 200, { ok: true, profile: publicProfile(p) });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e.message });
       }

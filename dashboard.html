@@ -126,6 +126,7 @@
     <span class="pill indigo" id="profCount">0 profiles</span>
     <span class="spacer"></span>
     <span id="clock"></span>
+    <span class="muted" id="serverClock" title="Schedules use server time"></span>
     <button class="ghost" style="margin:0" onclick="logout()">Logout</button>
   </div>
   <div id="errBanner" class="err-banner" style="display:none"></div>
@@ -195,6 +196,17 @@
     </div>
     <label>…or paste titles here (one per line)</label>
     <textarea id="fTitlesText" placeholder="Senior Backend Developer | Node.js | AWS&#10;Backend Engineer | …"></textarea>
+  <label>Schedule <span class="muted">(server time — see clock above)</span></label>
+  <div class="row">
+    <div><label>Mode</label><select id="fSched" onchange="toggleScheduleTargets('f')">
+      <option value="interval">Every X hours (from Settings)</option>
+      <option value="daily">Every day at…</option>
+      <option value="window">Random between…</option>
+    </select></div>
+    <div id="fTimeWrap" style="display:none"><label>Time (HH:MM, 24h)</label><input id="fTime" type="text" placeholder="09:00"></div>
+    <div id="fFromWrap" style="display:none"><label>From (HH:MM)</label><input id="fFrom" type="text" placeholder="08:00"></div>
+    <div id="fToWrap" style="display:none"><label>To (HH:MM)</label><input id="fTo" type="text" placeholder="09:00"></div>
+  </div>
   <label>Update tasks (at least one)</label>
   <div class="row">
     <div><label><input id="fTaskTitle" type="checkbox" checked style="width:auto"> Update Title (headline)</label></div>
@@ -364,6 +376,18 @@ function toggleNotifyTargets(prefix){
   document.getElementById(prefix+"GroupWrap").style.display = t==="group" ? "block" : "none";
   document.getElementById(prefix+"PhoneWrap").style.display = t==="personal" ? "block" : "none";
 }
+function readSchedule(prefix){
+  const mode = document.getElementById(prefix+"Sched").value;
+  if(mode === "daily") return { mode, time: document.getElementById(prefix+"Time").value.trim() };
+  if(mode === "window") return { mode, from: document.getElementById(prefix+"From").value.trim(), to: document.getElementById(prefix+"To").value.trim() };
+  return { mode: "interval" };
+}
+function toggleScheduleTargets(prefix){
+  const t = document.getElementById(prefix+"Sched").value;
+  document.getElementById(prefix+"TimeWrap").style.display = t==="daily" ? "block" : "none";
+  document.getElementById(prefix+"FromWrap").style.display = t==="window" ? "block" : "none";
+  document.getElementById(prefix+"ToWrap").style.display = t==="window" ? "block" : "none";
+}
 function toggleCardNotify(id){
   const t = document.getElementById("n-"+id).value;
   document.getElementById("ng-"+id).style.display = t==="group"?"block":"none";
@@ -421,6 +445,8 @@ async function refresh(){
     lastSig = sig;
     showErr(null);
     document.getElementById("profCount").textContent = j.profiles.length + (j.profiles.length===1?" profile":" profiles");
+    const sc = document.getElementById("serverClock");
+    if(sc && j.now) sc.textContent = "Server: " + new Date(j.now).toLocaleString();
     const box = document.getElementById("profiles");
     const list = Array.isArray(j.profiles) ? j.profiles : [];
     document.querySelectorAll("#profiles details.pcard").forEach(d=>{ if(d.open) openCards.add(d.dataset.pid); else openCards.delete(d.dataset.pid); });
@@ -439,6 +465,7 @@ async function refresh(){
         + '<div><span class="pill slate">Title '+(p.titleIndex+1)+' of '+p.titlesTotal+'</span> '
         + '<span class="pill slate">'+(p.authMethod==="cookies"?"cookies":"email+pass")+'</span> '
         + '<span class="pill slate">'+(p.tasks.title&&p.tasks.resume?"title+resume":p.tasks.title?"title only":"resume only")+'</span> '
+        + '<span class="pill indigo">'+esc(p.scheduleText||"Every ?h")+'</span> '
         + '<span class="pill slate">'+esc(nt)+'</span></div>'
         + '<div class="prog"><div style="width:'+pct+'%"></div></div>'
         + '<div class="timing">Last: '+esc(last)+' &nbsp;|&nbsp; Next: <span data-next="'+esc(p.nextRun||"")+'" data-running="'+(p.running?1:0)+'">-</span></div>'
@@ -459,6 +486,15 @@ async function refresh(){
         + '<div class="row"><div><label><input id="t-'+p.id+'" type="checkbox"'+(p.tasks.title?" checked":"")+' style="width:auto"> Update Title</label></div>'
         + '<div><label><input id="r-'+p.id+'" type="checkbox"'+(p.tasks.resume?" checked":"")+' style="width:auto"> Update Resume</label></div>'
         + '<div><label>&nbsp;</label><button class="ghost" onclick="saveTasks(\''+p.id+'\')">Save tasks</button></div></div>'
+        + '<div class="row"><div><label>Schedule (server time)</label><select id="s-'+p.id+'" onchange="toggleScheduleTargetsCard(\''+p.id+'\')">'
+        + '<option value="interval"'+(p.schedule.mode==="interval"?" selected":"")+'>Every X hours</option>'
+        + '<option value="daily"'+(p.schedule.mode==="daily"?" selected":"")+'>Every day at…</option>'
+        + '<option value="window"'+(p.schedule.mode==="window"?" selected":"")+'>Random between…</option>'
+        + '</select></div>'
+        + '<div id="st-'+p.id+'" style="display:'+(p.schedule.mode==="daily"?"block":"none")+'"><label>Time (HH:MM)</label><input id="sv-'+p.id+'" type="text" value="'+esc(p.schedule.time||"")+'"></div>'
+        + '<div id="sf-'+p.id+'" style="display:'+(p.schedule.mode==="window"?"block":"none")+'"><label>From</label><input id="sw-'+p.id+'" type="text" value="'+esc(p.schedule.from||"")+'"></div>'
+        + '<div id="sx-'+p.id+'" style="display:'+(p.schedule.mode==="window"?"block":"none")+'"><label>To</label><input id="sy-'+p.id+'" type="text" value="'+esc(p.schedule.to||"")+'"></div>'
+        + '<div><label>&nbsp;</label><button class="ghost" onclick="saveSchedule(\''+p.id+'\')">Save schedule</button></div></div>'
         + '<details><summary class="muted">Edit files (Titles.txt, Resume.pdf) — current: '+p.titlesTotal+' titles • resume '+(p.resumePresent?"present":"missing")+'</summary>'
         + '<label>New titles .txt file (replaces all, rotation restarts at #1)</label><input id="ft-'+p.id+'" type="file" accept=".txt,text/plain">'
         + '<label>…or paste new titles (one per line)</label><textarea id="fx-'+p.id+'" class="mono" style="min-height:56px"></textarea>'
@@ -507,6 +543,7 @@ async function addProfile(){
       name: document.getElementById("fName").value.trim(),
       notify: { type: document.getElementById("fNotify").value, group: document.getElementById("fGroup").value, phone: document.getElementById("fPhone").value, customMsg: document.getElementById("fCustomMsg").value },
       tasks: { title: document.getElementById("fTaskTitle").checked, resume: document.getElementById("fTaskResume").checked },
+      schedule: readSchedule('f'),
       titlesText: document.getElementById("fTitlesText").value
     };
     if(method === "cookies"){
@@ -574,6 +611,23 @@ async function saveNotify(id){
     await api("PUT","/api/profiles/"+id+"/notify",{ notify:{ type:document.getElementById("n-"+id).value, group:document.getElementById("g-"+id).value, phone:document.getElementById("p-"+id).value, customMsg:document.getElementById("c-"+id).value } });
     m.textContent="Notification saved."; lastSig=""; refresh();
   }catch(e){ m.textContent="Error: "+e.message; }
+}
+async function saveSchedule(id){
+  const m = document.getElementById("m-"+id); m.textContent="Saving schedule…";
+  try{
+    const mode = document.getElementById("s-"+id).value;
+    const sch = mode==="daily" ? {mode, time:document.getElementById("sv-"+id).value.trim()}
+      : mode==="window" ? {mode, from:document.getElementById("sw-"+id).value.trim(), to:document.getElementById("sy-"+id).value.trim()}
+      : {mode:"interval"};
+    await api("PUT","/api/profiles/"+id+"/schedule",{schedule:sch});
+    m.textContent="Schedule saved."; lastSig=""; refresh();
+  }catch(e){ m.textContent="Error: "+e.message; }
+}
+function toggleScheduleTargetsCard(id){
+  const t = document.getElementById("s-"+id).value;
+  document.getElementById("st-"+id).style.display = t==="daily"?"block":"none";
+  document.getElementById("sf-"+id).style.display = t==="window"?"block":"none";
+  document.getElementById("sx-"+id).style.display = t==="window"?"block":"none";
 }
 async function saveTasks(id){
   const m = document.getElementById("m-"+id); m.textContent="Saving tasks…";
