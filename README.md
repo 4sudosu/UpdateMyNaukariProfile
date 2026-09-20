@@ -52,6 +52,8 @@ Render's free disk wipes on every redeploy/restart/sleep. Cloud backup fixes tha
 
 **Restore is automatic:** on boot, if the local disk is empty but the cloud has data, everything is pulled back before the server starts. Look for `restored from cloud: profiles=true settings=true wa=true files=N` in the logs. It **never** overwrites a server that already has data.
 
+**Restore manually anytime:** dashboard Settings → *Cloud backup* → **Restore from cloud** (asks for confirmation first, refuses when the cloud is empty so it can't wipe anything).
+
 **Verify it's working:**
 - Dashboard Settings → *Cloud backup* shows *On — last push: \<time\>*.
 - Upstash dashboard → your database → **Data Browser** → look for the `nb:manifest` key (usage graphs can lag minutes behind; the key list is ground truth).

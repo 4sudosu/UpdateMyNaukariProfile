@@ -1598,6 +1598,37 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // POST /api/cloud/restore — pull everything now (needs {confirm:true}).
+    // Safe by default: refuses when the cloud is empty so it can never wipe local data.
+    if (url === "/api/cloud/restore" && req.method === "POST") {
+      if (!body.confirm) {
+        sendJson(res, 400, { ok: false, error: "Pass {confirm:true} — this overwrites local profiles/settings with the cloud copy." });
+        return;
+      }
+      try {
+        const r = await cloudBackup.pullMissing({ force: true });
+        if (!r.pulled) {
+          sendJson(res, 400, { ok: false, error: r.reason || "Nothing to restore" });
+          return;
+        }
+        const freshReg = profiles.loadRegistry();
+        const gone = new Set(reg.profiles.map((p) => p.id));
+        reg.profiles = freshReg.profiles;
+        for (const p of reg.profiles) gone.delete(p.id);
+        for (const id of gone) unscheduleProfile(id);
+        Object.assign(settings, settingsStore.loadSettings());
+        wa.configure({ enabled: settings.whatsapp.enabled });
+        for (const p of reg.profiles) {
+          if (!running[p.id]) anchorProfile(p);
+        }
+        log("Manual cloud restore done");
+        sendJson(res, 200, { ok: true, ...r });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
     sendJson(res, 404, { ok: false, error: "Unknown endpoint" });
     return;
   }

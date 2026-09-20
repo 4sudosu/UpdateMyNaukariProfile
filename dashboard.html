@@ -262,6 +262,7 @@
     <div class="muted" id="cloudStatus">Loading…</div>
     <div class="row">
       <div><label>&nbsp;</label><button class="ghost" onclick="cloudBackupNow()">Backup now</button></div>
+      <div><label>&nbsp;</label><button class="ghost" onclick="cloudRestore()">Restore from cloud</button></div>
     </div>
     <div id="cloudMsg" class="msg"></div>
     <label>Theme — 10 combinations, light &amp; dark (applies instantly)</label>
@@ -774,6 +775,17 @@ async function cloudBackupNow(){
   try{
     await api("POST","/api/cloud/backup-now",{});
     m.className="msg ok"; m.textContent="Backed up to cloud.";
+    lastSig=""; refresh();
+  }catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
+}
+async function cloudRestore(){
+  if(!confirm("Restore everything from cloud backup? This overwrites local profiles, files and settings with the cloud copy.")) return;
+  const m = document.getElementById("cloudMsg"); m.className="msg"; m.textContent="Restoring…";
+  try{
+    const j = await api("POST","/api/cloud/restore",{confirm:true});
+    const r = j.restored || {};
+    m.className="msg ok";
+    m.textContent = "Restored: profiles=" + !!r.profiles + " settings=" + !!r.settings + " whatsapp=" + !!r.wa + " files=" + (r.files || []).length + ".";
     lastSig=""; refresh();
   }catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
 }

@@ -217,8 +217,10 @@ function localWaLinked() {
   }
 }
 
-// Pull cloud data ONLY where local is missing/empty. Returns what was restored.
-async function pullMissing() {
+// Pull cloud data where local is missing/empty — or everywhere with { force: true }.
+// Force is for the manual Restore button (caller confirms first).
+async function pullMissing(opts) {
+  const force = !!(opts && opts.force);
   if (!isEnabled()) return { pulled: false, reason: "not configured" };
   let manifest = null;
   try {
@@ -229,8 +231,11 @@ async function pullMissing() {
     throw e;
   }
   if (!manifest) return { pulled: false, reason: "nothing stored yet" };
+  if (!force && (manifest.profiles || []).length === 0 && !manifest.settings && (manifest.waChunks || 0) === 0) {
+    return { pulled: false, reason: "nothing stored yet" };
+  }
   const restored = { profiles: false, settings: false, files: [], wa: false };
-  if ((manifest.profiles || []).length > 0 && localRegistryCount() === 0) {
+  if (((manifest.profiles || []).length > 0 && localRegistryCount() === 0) || force) {
     const regRaw = await getKey(K.registry);
     if (regRaw) {
       writeText(path.join(profilesDir(), "profiles.json"), regRaw);
@@ -244,7 +249,7 @@ async function pullMissing() {
       restored.files.push(f);
     }
   }
-  if (manifest.settings && !fs.existsSync(path.join(__dirname, "settings.json"))) {
+  if (manifest.settings && (!fs.existsSync(path.join(__dirname, "settings.json")) || force)) {
     const sRaw = await getKey(K.settings);
     if (sRaw) {
       writeText(path.join(__dirname, "settings.json"), sRaw);
@@ -252,7 +257,7 @@ async function pullMissing() {
     }
   }
   const waCount = manifest && typeof manifest.waChunks === "number" ? manifest.waChunks : 0;
-  if (waCount > 0 && !localWaLinked()) {
+  if (waCount > 0 && (!localWaLinked() || force)) {
     for (let i = 0; i < waCount; i++) {
       const raw = await getKey(K.waChunk(i));
       if (!raw) continue;
