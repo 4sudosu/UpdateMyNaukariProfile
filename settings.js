@@ -13,7 +13,18 @@ const THEME_IDS = ["indigo", "ocean", "emerald", "sunset", "rose", "midnight", "
 
 function defaults() {
   // WhatsApp is opt-in: OFF until linked from the dashboard. Never auto-links on startup.
-  return { intervalHours: 18, theme: "indigo", whatsapp: { enabled: false, accountName: "" } };
+  // timezone drives resume filenames + daily/window slots (use your own, e.g. Asia/Kolkata).
+  return { intervalHours: 18, theme: "indigo", timezone: "Asia/Kolkata", whatsapp: { enabled: false, accountName: "" } };
+}
+
+function validTimezone(tz) {
+  if (typeof tz !== "string" || !tz.trim()) return null;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz.trim() });
+    return tz.trim();
+  } catch {
+    return null;
+  }
 }
 
 function clampInterval(v) {
@@ -30,6 +41,7 @@ function loadSettings() {
     return {
       intervalHours: iv === null ? d.intervalHours : iv,
       theme: THEME_IDS.includes(raw.theme) ? raw.theme : d.theme,
+      timezone: validTimezone(raw.timezone) || d.timezone,
       whatsapp: {
         enabled: raw.whatsapp && typeof raw.whatsapp.enabled === "boolean" ? raw.whatsapp.enabled : d.whatsapp.enabled,
         accountName:
@@ -50,4 +62,4 @@ function saveSettings(s) {
   fs.renameSync(tmp, SETTINGS_FILE);
 }
 
-module.exports = { loadSettings, saveSettings, clampInterval, THEME_IDS };
+module.exports = { loadSettings, saveSettings, clampInterval, validTimezone, THEME_IDS };

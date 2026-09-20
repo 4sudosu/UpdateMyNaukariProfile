@@ -207,11 +207,12 @@ function getSetCookies(res) {
 }
 
 // ---------- dated resume name: <Name>_Resume_20Sept.pdf ----------
+// Day/month come from settings.timezone (default Asia/Kolkata), NOT the server clock.
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
 function datedResumeName(prefix, date = new Date()) {
-  const dd = String(date.getDate()).padStart(2, "0");
-  const mmm = MONTHS[date.getMonth()];
-  return `${prefix}_${dd}${mmm}.pdf`;
+  const p = tzParts(settingsTz(), date.getTime());
+  const dd = String(p.d).padStart(2, "0");
+  return `${prefix}_${dd}${MONTHS[p.mo - 1]}.pdf`;
 }
 
 // ---------- Naukri API (free, reverse-engineered web endpoints) ----------
@@ -463,6 +464,36 @@ async function uploadResumeDated(ctx, bearer, profileId, fileBytes, datedName) {
   return { skipped: false, filename: datedName };
 }
 
+// Loud session-expiry alert via the profile's own notification target.
+// Logs exactly what happened: sent, skipped (why), or failed.
+async function alertSessionDead(p, err) {
+  const target =
+    p.notify && p.notify.type === "group"
+      ? `group "${p.notify.group}"`
+      : p.notify && p.notify.type === "personal"
+        ? `personal +${p.notify.phone}`
+        : null;
+  if (!target) {
+    log(`[${p.name}] session alert SKIPPED (profile notifications off)`);
+    return { sent: false, reason: "notifications off" };
+  }
+  if (!wa.getStatus().enabled) {
+    log(`[${p.name}] session alert SKIPPED (WhatsApp linking off)`);
+    return { sent: false, reason: "WhatsApp off" };
+  }
+  const text =
+    `Hi Boss,\nNaukri session for ${p.name} expired or not working. Please refresh the login from the dashboard.\nError: ${String((err && err.message) || err || "").slice(0, 200)}`;
+  try {
+    if (p.notify.type === "group") await wa.sendGroupMessage(text, p.notify.group);
+    else await wa.sendPersonalMessage(text, p.notify.phone);
+    log(`[${p.name}] session alert SENT to ${target}`);
+    return { sent: true, target };
+  } catch (e) {
+    log(`[${p.name}] session alert FAILED: ${e.message} (is WhatsApp linked? check the dashboard)`);
+    return { sent: false, reason: e.message };
+  }
+}
+
 // Login/session-looking failures (expired cookies, bad password, OTP blocks).
 function isAuthError(err) {
   return /login failed|no nauk_at|otp|unauthor|401|403|forbidden|session|cookie|token/i.test(
@@ -666,34 +697,14 @@ async function runProfile(p) {
         : resumeErr && isAuthError(resumeErr)
           ? resumeErr
           : null;
-    if (taskAuthErr && p.notify && p.notify.type !== "off") {
-      try {
-        const text =
-          `Hi Boss,\nNaukri session for ${p.name} expired or not working. Please refresh the login from the dashboard.\nError: ${String(taskAuthErr.message).slice(0, 200)}`;
-        if (p.notify.type === "group") await wa.sendGroupMessage(text, p.notify.group);
-        else await wa.sendPersonalMessage(text, p.notify.phone);
-        log(`[${p.name}] WHATSAPP session alert sent`);
-      } catch {
-        // the alert itself must never break anything
-      }
-    }
+    if (taskAuthErr) await alertSessionDead(p, taskAuthErr);
     return false;
   } catch (err) {
     p.lastStatus = `FAILED: ${err.message}`;
     profiles.saveRegistry(reg);
     log(`[${p.name}] ERROR: ${p.lastStatus}`);
     // Session dead/expired? Alert on WhatsApp (if linked) so login gets refreshed.
-    if (isAuthError(err) && p.notify && p.notify.type !== "off") {
-      try {
-        const text =
-          `Hi Boss,\nNaukri session for ${p.name} expired or not working. Please refresh the login from the dashboard.\nError: ${String(err.message).slice(0, 200)}`;
-        if (p.notify.type === "group") await wa.sendGroupMessage(text, p.notify.group);
-        else await wa.sendPersonalMessage(text, p.notify.phone);
-        log(`[${p.name}] WHATSAPP session alert sent`);
-      } catch {
-        // the alert itself must never break anything
-      }
-    }
+    if (isAuthError(err)) await alertSessionDead(p, err);
     return false; // index NOT advanced — same title retried next cycle
   }
 }
@@ -718,33 +729,58 @@ function enqueueProfileRun(id) {
 
 // ---------- per-profile scheduling ----------
 // interval: every Xh from last update. daily: fixed HH:MM. window: random moment in [from, to].
-// All times are server-local. A missed slot runs ONCE (no catch-up spam); daily/window run max once/day.
+// All calendar math uses settings.timezone (default Asia/Kolkata), NOT the server
+// clock — so resume dates and slots are right even on a UTC cloud server.
+// A missed slot runs ONCE (no catch-up spam); daily/window run max once/day.
 function parseHM(s) {
   const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((s || "").trim());
   return m ? { h: +m[1], m: +m[2], mins: +m[1] * 60 + +m[2] } : null;
 }
+function settingsTz() {
+  return (settings && settings.timezone) || "Asia/Kolkata";
+}
+// Calendar parts of ms in tz (minute precision).
+function tzParts(tz, ms) {
+  const o = {};
+  for (const p of new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).formatToParts(new Date(ms))) o[p.type] = p.value;
+  return { y: +o.year, mo: +o.month, d: +o.day, h: +o.hour % 24, mi: +o.minute };
+}
+function tzOffsetMs(tz, ms) {
+  const p = tzParts(tz, Math.floor(ms / 60000) * 60000);
+  return Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi) - Math.floor(ms / 60000) * 60000;
+}
+// Wall time in tz -> absolute ms (two passes converge outside DST gaps).
+function zonedToUtc(tz, y, mo, d, h, mi) {
+  const base = Date.UTC(y, mo - 1, d, h, mi);
+  let guess = base - tzOffsetMs(tz, base);
+  guess = base - tzOffsetMs(tz, guess);
+  return guess;
+}
 function sameDay(a, b) {
-  const da = new Date(a);
-  const db = new Date(b);
-  return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
+  const tz = settingsTz();
+  const da = tzParts(tz, a);
+  const db = tzParts(tz, b);
+  return da.y === db.y && da.mo === db.mo && da.d === db.d;
 }
 function slotToday(hm, now) {
-  const d = new Date(now);
-  d.setHours(hm.h, hm.m, 0, 0);
-  return d.getTime();
+  const tz = settingsTz();
+  const p = tzParts(tz, now);
+  return zonedToUtc(tz, p.y, p.mo, p.d, hm.h, hm.m);
 }
 function nextDaily(timeStr, now) {
   const t = slotToday(parseHM(timeStr), now);
   return t <= now ? t + 86400000 : t;
 }
 function nextWindow(fromStr, toStr, lastRunMs, now) {
+  const tz = settingsTz();
   const f = parseHM(fromStr);
   const t = parseHM(toStr);
   if (!f || !t) return now + intervalMs(); // corrupt data: safe fallback
-  const day = new Date(now);
-  day.setHours(0, 0, 0, 0);
-  const w0 = day.getTime() + f.mins * 60000;
-  const w1 = day.getTime() + t.mins * 60000;
+  const p = tzParts(tz, now);
+  const w0 = zonedToUtc(tz, p.y, p.mo, p.d, f.h, f.m);
+  const w1 = zonedToUtc(tz, p.y, p.mo, p.d, t.h, t.m);
   if (lastRunMs && sameDay(lastRunMs, now)) return w0 + 86400000 + Math.random() * (w1 - w0); // ran today -> tomorrow
   if (now < w1) {
     const lo = Math.max(now + 45000, w0);
@@ -789,10 +825,11 @@ function nextSlotFuture(p, now) {
       const f = parseHM(p.schedule.from);
       const t = parseHM(p.schedule.to);
       if (f && t && f.mins < t.mins) {
-        const day = new Date(now);
-        day.setHours(0, 0, 0, 0);
-        const w0 = day.getTime() + 86400000 + f.mins * 60000;
-        const w1 = day.getTime() + 86400000 + t.mins * 60000;
+        const tz = settingsTz();
+        const c = tzParts(tz, now);
+        const tp = tzParts(tz, zonedToUtc(tz, c.y, c.mo, c.d, 12, 0) + 86400000); // tomorrow in tz
+        const w0 = zonedToUtc(tz, tp.y, tp.mo, tp.d, f.h, f.m);
+        const w1 = zonedToUtc(tz, tp.y, tp.mo, tp.d, t.h, t.m);
         return w0 + Math.random() * (w1 - w0);
       }
     }
@@ -1040,7 +1077,7 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       now: new Date().toISOString(),
       intervalHours: settings.intervalHours,
-      settings: { intervalHours: settings.intervalHours, theme: settings.theme, whatsapp: settings.whatsapp },
+      settings: { intervalHours: settings.intervalHours, theme: settings.theme, timezone: settings.timezone, whatsapp: settings.whatsapp },
       locked: panelLocked,
       wa: wa.getStatus(),
       profiles: reg.profiles.map(publicProfile),
@@ -1430,6 +1467,29 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // POST /api/profiles/:id/test-notify — send a test alert via the profile's target
+    if (parts[1] === "profiles" && parts[2] && parts[3] === "test-notify" && req.method === "POST") {
+      const p = profiles.getProfile(reg, parts[2]);
+      if (!p) {
+        sendJson(res, 404, { ok: false, error: "Profile not found" });
+        return;
+      }
+      if (!p.notify || p.notify.type === "off") {
+        sendJson(res, 400, { ok: false, error: "Enable notifications for this profile first (group or personal)" });
+        return;
+      }
+      try {
+        const text = `Hi Boss,\nTest alert for ${p.name} — notifications work.`;
+        if (p.notify.type === "group") await wa.sendGroupMessage(text, p.notify.group);
+        else await wa.sendPersonalMessage(text, p.notify.phone);
+        log(`[${p.name}] test notification sent`);
+        sendJson(res, 200, { ok: true, sent: true });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
     if (url === "/api/whatsapp/pair" && req.method === "POST") {
       try {
         const r = await wa.requestPairingCode(body.phone);
@@ -1461,6 +1521,19 @@ const server = http.createServer(async (req, res) => {
         }
         settings.theme = body.theme;
         out.theme = body.theme;
+      }
+      if (body.timezone !== undefined) {
+        const tz = settingsStore.validTimezone(body.timezone);
+        if (!tz) {
+          sendJson(res, 400, { ok: false, error: "Unknown timezone — use a name like Asia/Kolkata" });
+          return;
+        }
+        if (tz !== settings.timezone) {
+          settings.timezone = tz;
+          log(`Timezone changed to ${tz} — re-anchoring all profiles`);
+          rescheduleAll();
+        }
+        out.timezone = settings.timezone;
       }
       settingsStore.saveSettings(settings);
       sendJson(res, 200, { ok: true, ...out });

@@ -241,6 +241,23 @@
   <details class="sect"><summary><span>Settings</span> <span class="pill slate" id="waPill">…</span></summary>
   <div class="card">
     <div class="muted">Update rhythm is set per profile (every X hours, daily time, or random window) — see each profile card.</div>
+    <div class="row">
+      <div><label>Timezone (dates + daily slots)</label><select id="setTz">
+        <option value="Asia/Kolkata">IST — India (Asia/Kolkata)</option>
+        <option value="Asia/Dubai">GST — Dubai (Asia/Dubai)</option>
+        <option value="Asia/Singapore">SGT — Singapore (Asia/Singapore)</option>
+        <option value="Asia/Tokyo">JST — Tokyo (Asia/Tokyo)</option>
+        <option value="Australia/Sydney">AEST — Sydney (Australia/Sydney)</option>
+        <option value="Europe/London">GMT/BST — London (Europe/London)</option>
+        <option value="Europe/Berlin">CET — Berlin (Europe/Berlin)</option>
+        <option value="America/New_York">EST — New York (America/New_York)</option>
+        <option value="America/Chicago">CST — Chicago (America/Chicago)</option>
+        <option value="America/Los_Angeles">PST — Los Angeles (America/Los_Angeles)</option>
+        <option value="UTC">UTC</option>
+      </select></div>
+      <div><label>&nbsp;</label><button class="ghost" onclick="saveTimezone()">Save timezone</button></div>
+    </div>
+    <div id="tzMsg" class="msg"></div>
     <label>Theme — 10 combinations, light &amp; dark (applies instantly)</label>
     <div class="swatches" id="themeSwatches"></div>
     <div id="setMsg" class="msg"></div>
@@ -438,6 +455,15 @@ async function refresh(){
     const j = await api("GET","/api/status");
     if(document.getElementById("app").style.display === "none") hideLogin();
     if(j.settings && j.settings.theme && j.settings.theme !== appliedTheme) applyTheme(j.settings.theme, false);
+    const tzin = document.getElementById("setTz");
+    if(tzin && document.activeElement !== tzin && j.settings && j.settings.timezone) {
+      if(![...tzin.options].some(o => o.value === j.settings.timezone)) {
+        const o = document.createElement("option");
+        o.value = j.settings.timezone; o.textContent = j.settings.timezone;
+        tzin.appendChild(o);
+      }
+      tzin.value = j.settings.timezone;
+    }
     const wa = j.wa || {};
     const acc = (j.settings && j.settings.whatsapp) || {};
     let s = "Status: " + (!wa.enabled ? "OFF" : wa.connected ? "CONNECTED" : wa.qrPending ? "waiting for scan…" : "connecting…");
@@ -539,6 +565,7 @@ async function refresh(){
         + '<button class="teal" onclick="browserLoginRefresh(\''+p.id+'\')">Login via Browser</button></details><br>'
         + '<button class="ghost" onclick="clearCookies(\''+p.id+'\')">Clear cookies</button>'
         + '<button class="teal" onclick="testLogin(\''+p.id+'\')">Test login</button>'
+        + '<button class="ghost" onclick="testNotify(\''+p.id+'\')">Test notification</button>'
         + '<button class="danger" onclick="delProfile(\''+p.id+'\',\''+esc(p.name).replace(/'/g,"")+'\')">Delete</button>'
         + '<div class="msg" id="m-'+p.id+'"></div>'
         + '</details>';
@@ -685,6 +712,13 @@ async function testLogin(id){
     m.textContent="Login works ("+j.method+", Naukri profile "+j.profileId+"). Session saved — future updates skip login."; lastSig=""; refresh();
   }catch(e){ m.textContent="Error: "+e.message; }
 }
+async function testNotify(id){
+  const m = document.getElementById("m-"+id); m.textContent="Sending test alert…";
+  try{
+    await api("POST","/api/profiles/"+id+"/test-notify",{});
+    m.textContent="Test alert sent — check WhatsApp.";
+  }catch(e){ m.textContent="Error: "+e.message; }
+}
 async function verifyCardOtp(id){
   const m = document.getElementById("m-"+id);
   const code = document.getElementById("av-"+id).value.trim();
@@ -711,6 +745,14 @@ async function saveAuth(id){
     await api("PUT","/api/profiles/"+id+"/auth",{auth});
     m.textContent="Login updated (cookies verified live)."; lastSig=""; refresh();
   }catch(e){ m.textContent="Error: "+e.message; }
+}
+async function saveTimezone(){
+  const m = document.getElementById("tzMsg"); m.className="msg"; m.textContent="Saving…";
+  try{
+    const j = await api("PUT","/api/settings",{ timezone:document.getElementById("setTz").value.trim() });
+    m.className="msg ok"; m.textContent="Timezone saved: "+j.timezone+". All profiles re-anchored.";
+    lastSig=""; refresh();
+  }catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
 }
 async function saveWaSettings(){
   const m = document.getElementById("waMsg"); m.className="msg"; m.textContent="Saving…";
