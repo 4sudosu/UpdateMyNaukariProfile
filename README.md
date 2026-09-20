@@ -37,12 +37,27 @@ Keep your **Naukri.com** profile fresh on autopilot — rotating **Resume Headli
 
 ### ☁️ Free cloud backup (survive wipes)
 
-1. Create a **free** Redis database at [upstash.com](https://upstash.com) (Regional, any nearby region).
-2. Open it → **REST API** tab → copy the **Endpoint** and **Token**.
-3. Add them as environment variables (Render Dashboard → Environment, and/or local `.env`):
-   - `UPSTASH_REDIS_REST_URL` → the endpoint
-   - `UPSTASH_REDIS_REST_TOKEN` → the token
-4. Done. The app auto-backs-up profiles, settings, resume/title files and the WhatsApp link, and **restores everything itself** after a wipe. Watch it in dashboard Settings → *Cloud backup* (with a manual **Backup now** button).
+Render's free disk wipes on every redeploy/restart/sleep. Cloud backup fixes that:
+
+1. Create a **free** Redis database at [upstash.com](https://upstash.com) (Regional type, region nearest you — free tier: ~10k requests/day, plenty for this app).
+2. Open the database → **REST API** tab → copy the **Endpoint** and **Token**.
+3. Add them as environment variables (Render Dashboard → Environment → Save → redeploys automatically; and/or local `.env`):
+    - `UPSTASH_REDIS_REST_URL` → the endpoint, e.g. `https://xxx.upstash.io` (no trailing slash)
+    - `UPSTASH_REDIS_REST_TOKEN` → the token starting with `AX...`
+4. Done — no code changes, no restarts beyond the deploy.
+
+**What gets backed up:** profiles registry, settings (interval/theme/timezone/WhatsApp name), every `Name_Titles.txt` + `Name_Resume.pdf`, and the whole WhatsApp link session (bundled, ~2 requests — not thousands).
+
+**When:** automatically after every change (debounced), every 30 minutes while awake, on demand via dashboard Settings → **Backup now**, and right before unlinking WhatsApp (session part only).
+
+**Restore is automatic:** on boot, if the local disk is empty but the cloud has data, everything is pulled back before the server starts. Look for `restored from cloud: profiles=true settings=true wa=true files=N` in the logs. It **never** overwrites a server that already has data.
+
+**Verify it's working:**
+- Dashboard Settings → *Cloud backup* shows *On — last push: \<time\>*.
+- Upstash dashboard → your database → **Data Browser** → look for the `nb:manifest` key (usage graphs can lag minutes behind; the key list is ground truth).
+- Server logs print `backed up N profile(s)…` on every push.
+
+**If Upstash shows no requests:** you're likely viewing a different database than the one whose credentials you pasted, the env values have a typo/extra space, or the process started before the vars were saved (redeploy/restart after editing env). The app's Settings line will say *Off* or show the exact error.
 
 ---
 
@@ -59,6 +74,9 @@ Create a `.env` file — **only 2 variables, nothing else:**
 ```env
 PORT=3000
 WEB_PASSWORD=pick-something-strong
+# optional — free Upstash Redis cloud backup (see above):
+# UPSTASH_REDIS_REST_URL=https://xxx.upstash.io
+# UPSTASH_REDIS_REST_TOKEN=AXxx...
 ```
 
 ```bash
@@ -73,6 +91,8 @@ Open **http://localhost:3000** → log in with your panel password.
 |---|---|---|
 | `WEB_PASSWORD` | ✅ Yes | Password for the whole dashboard (login screen + every action). 3 wrong tries locks everything until restart. |
 | `PORT` | No | Server port. Render injects its own — you never set this there. Defaults to `3000` locally. |
+| `UPSTASH_REDIS_REST_URL` | No | Upstash Redis REST endpoint. Enables free cloud backup (see above). |
+| `UPSTASH_REDIS_REST_TOKEN` | No | Upstash Redis REST token. Keep secret — never commit it. |
 
 Everything else (update interval, themes, WhatsApp, profiles) lives in the **dashboard Settings** — on purpose, so secrets stay out of env files.
 
