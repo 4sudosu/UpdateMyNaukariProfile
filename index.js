@@ -842,7 +842,11 @@ function readJsonBody(req, maxBytes = 10 * 1024 * 1024) {
 }
 
 function sendJson(res, status, obj) {
-  res.writeHead(status, { "content-type": "application/json" });
+  res.writeHead(status, {
+    "content-type": "application/json",
+    "cache-control": "no-store, no-cache, must-revalidate",
+    pragma: "no-cache",
+  });
   res.end(JSON.stringify(obj));
 }
 
@@ -1451,7 +1455,12 @@ const server = http.createServer(async (req, res) => {
   if (url === "/" || url === "/index.html") {
     try {
       const html = fs.readFileSync(DASHBOARD_FILE, "utf8");
-      res.writeHead(200, { "content-type": "text/html" });
+      res.writeHead(200, {
+        "content-type": "text/html",
+        "cache-control": "no-store, no-cache, must-revalidate",
+        pragma: "no-cache",
+        expires: "0",
+      });
       res.end(html);
     } catch {
       res.writeHead(500, { "content-type": "text/plain" });
