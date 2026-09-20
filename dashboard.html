@@ -165,7 +165,12 @@
       </div>
     </div>
     <div id="fCookieWrap" style="display:none">
-      <label>Paste session cookies (one line works: <span class="mono">nauk_at=...; nauk_sid=...; nauk_rt=...</span>)</label>
+    <div style="background:var(--ghostbg);border:1px solid var(--cardbrd);border-radius:10px;padding:12px;margin-bottom:10px">
+      <b>Fastest:</b> <span class="muted">already logged in on naukri.com in this browser?</span><br>
+      <a href="#" onclick="location.href=BMLET;return false;"><b>Naukri session capture — drag me to your bookmarks bar, then click me while on naukri.com</b></a>
+      <div class="muted">It copies your session — paste it in the box below. Any missing cookie is named so you can grab it from DevTools.</div>
+    </div>
+    <label>Paste session cookies (one line works: <span class="mono">nauk_at=...; nauk_sid=...; nauk_rt=...</span>)</label>
       <textarea id="fCookieText" class="mono" style="min-height:60px" placeholder="nauk_at=PASTE_HERE; nauk_sid=PASTE_HERE; nauk_rt=PASTE_HERE"></textarea>
       <div class="row">
         <div><label>nauk_at (required)</label><input id="fCk1" type="text" placeholder="paste value"></div>
@@ -278,6 +283,9 @@
 <script>
 let lastSig = "";
 const openCards = new Set();
+/* One-click session capture: drag the link to your bookmarks bar, click it
+   while logged in on naukri.com — it copies nauk_at/sid/rt to clipboard. */
+const BMLET = "javascript:(function(){try{var w=['nauk_at','nauk_sid','nauk_rt'],p=document.cookie.split('; '),f={},m=[];w.forEach(function(k){var v=null;for(var i=0;i<p.length;i++){if(p[i].indexOf(k+'=')===0){v=p[i];break}}if(v){f[k]=v}else{m.push(k)}});var ks=Object.keys(f);if(!ks.length){alert('No Naukri session cookies found here. Log in at naukri.com first, then click again.');return}var t=ks.map(function(k){return f[k]}).join('; ');var d=function(){alert('Copied ('+ks.join(', ')+')! Paste it into your Naukri dashboard.'+(m.length?'\nMissing - copy from DevTools Application tab: '+m.join(', '):''))};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(d,function(){prompt('Copy your session:',t)})}else{prompt('Copy your session:',t)}}catch(e){alert('Capture failed: '+e)}})();";
 function showErr(t){ const b=document.getElementById("errBanner"); if(!b) return; if(t){ b.style.display="block"; b.textContent=t; } else { b.style.display="none"; b.textContent=""; } }
 let appliedTheme = "";
 const LS_KEY = "naukri_panel_token";
@@ -509,6 +517,7 @@ async function refresh(){
         + '<div><label>Email</label><input id="ae-'+p.id+'" type="email"></div>'
         + '<div><label>Password</label><input id="aw-'+p.id+'" type="password"></div></div></div>'
         + '<div id="ac-'+p.id+'" style="display:'+(p.authMethod==="cookies"?"block":"none")+'">'
+        + '<div class="muted">Fastest: already logged in? <a href="#" onclick="location.href=BMLET;return false;">capture from this browser</a> while on naukri.com, then paste here.</div>'
         + '<label>Paste cookies (nauk_at=...; nauk_sid=...; nauk_rt=...)</label>'
         + '<textarea id="at-'+p.id+'" class="mono" style="min-height:60px"></textarea>'
         + '<div class="row"><div><label>nauk_at</label><input id="ak1-'+p.id+'" type="text"></div>'
