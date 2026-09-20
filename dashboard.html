@@ -168,30 +168,11 @@
       </div>
     </div>
     <div id="fServerWrap" style="display:none">
-      <div class="muted">Server login captures cookies automatically — enter creds there once (never stored), complete MFA if asked. The captured <span class="mono">nauk_at</span> (required), <span class="mono">nauk_sid</span>, <span class="mono">nauk_rt</span> land in the three boxes below.</div>
+      <div class="muted">Server login captures the session automatically — enter creds there once (never stored), complete MFA if asked, then press <b>Add profile</b> here.</div>
       <button class="teal" onclick="goServerLogin()">Go to Server login ↓</button>
     </div>
     <div class="muted">Login is saved as session cookies — no passwords are stored.</div>
-    <div class="muted" style="margin-bottom:8px">Tip: <b>Login via Browser</b> below opens Edge/Chrome for one-click capture — or paste cookies here manually.</div>
-    <label>Paste session cookies (one line works: <span class="mono">nauk_at=...; nauk_sid=...; nauk_rt=...</span>)</label>
-      <textarea id="fCookieText" class="mono" style="min-height:60px" placeholder="nauk_at=PASTE_HERE; nauk_sid=PASTE_HERE; nauk_rt=PASTE_HERE"></textarea>
-      <div class="row">
-        <div><label>nauk_at (required)</label><input id="fCk1" type="text" placeholder="paste value"></div>
-        <div><label>nauk_sid (recommended)</label><input id="fCk2" type="text" placeholder="paste value"></div>
-        <div><label>nauk_rt (recommended)</label><input id="fCk3" type="text" placeholder="paste value"></div>
-      </div>
-      <details><summary class="muted"><b>How to get session cookies (steps)</b></summary>
-        <div class="muted">
-          1. In Chrome, log in at <b>naukri.com</b>.<br>
-          2. Press <b>F12</b> → <b>Application</b> tab → <b>Cookies</b> → <b>https://www.naukri.com</b>.<br>
-          3. Find <span class="mono">nauk_at</span>, <span class="mono">nauk_sid</span>, <span class="mono">nauk_rt</span> → double-click each Value → copy.<br>
-          4. Paste above as one line or fill the three boxes — either works.<br>
-          5. Click <b>Add profile</b> — the server verifies the cookies instantly.<br>
-          6. Cookies expire after some time — refresh them via <b>“Refresh login”</b> on the profile card.<br><br>
-          Shortcut — paste this in the <b>Console</b> tab and copy the printed lines:<br>
-          <span class="mono">["nauk_at","nauk_sid","nauk_rt"].forEach(n=>{const v=document.cookie.split("; ").find(r=>r.startsWith(n+"="));console.log(n+"="+(v?v.split("=").slice(1).join("="):"(not readable here — copy it from the Application tab)"))});</span>
-        </div>
-      </details>
+    <div class="muted" id="fCaptureNote">No session captured yet — capture one with <b>Server login</b> above or <b>Login via Browser</b> below, then press <b>Add profile</b>.</div>
   <div class="card" style="background:var(--ghostbg);border-color:var(--cardbrd)">
     <div id="browserWindowBlock">
       <b>No password, no copy-paste?</b> <span class="muted">Log in inside a real Chrome window — the session is captured automatically, then the profile is added. (Needs a screen + Chrome — your own computer.)</span><br>
@@ -606,9 +587,9 @@ async function addProfile(){
         email: document.getElementById("fEmail").value.trim(),
         password: document.getElementById("fPass").value };
     } else {
-      body.auth = { method: "cookies",
-        cookieText: document.getElementById("fCookieText").value,
-        cookies: { nauk_at: document.getElementById("fCk1").value, nauk_sid: document.getElementById("fCk2").value, nauk_rt: document.getElementById("fCk3").value } };
+      const cap = window._capturedCookies || {};
+      if(!cap.nauk_at){ msg.className="msg err"; msg.textContent="No session captured yet — use Server login (Go button above) or Login via Browser below first."; return; }
+      body.auth = { method: "cookies", cookies: { nauk_at: cap.nauk_at, nauk_sid: cap.nauk_sid || "", nauk_rt: cap.nauk_rt || "" } };
     }
     if(rf){
       if(!/\.pdf$/i.test(rf.name)){ msg.className="msg err"; msg.textContent='Resume must be a .pdf file (you chose "'+rf.name+'").'; return; }
@@ -620,7 +601,10 @@ async function addProfile(){
     }
     const j = await api("POST","/api/profiles",body);
     msg.className="msg ok"; msg.textContent="Added "+j.profile.name+" — first update started.";
-    ["fName","fEmail","fPass","fTitlesText","fCookieText","fCk1","fCk2","fCk3","fCustomMsg"].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=""; });
+    ["fName","fEmail","fPass","fTitlesText","fCustomMsg"].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=""; });
+    window._capturedCookies = null;
+    const note0 = document.getElementById("fCaptureNote");
+    if(note0) note0.textContent = "No session captured yet — capture one with Server login above or Login via Browser below, then press Add profile.";
     document.getElementById("fAuth").value = "password"; toggleAddAuth();
     document.getElementById("fTaskTitle").checked = true; document.getElementById("fTaskResume").checked = true;
     document.getElementById("fResume").value=""; document.getElementById("fTitles").value="";
@@ -831,14 +815,12 @@ async function browserHeadlessStartNew(){
         window._bhProfile = null; lastSig=""; refresh();
       }catch(e){ msg.textContent = "Error: "+e.message; }
     } : (cookies)=>{
-      const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
+      window._capturedCookies = cookies || {};
+      const names = Object.keys(window._capturedCookies).filter(k=>window._capturedCookies[k]);
       document.getElementById("fAuth").value = "server"; toggleAddAuth();
-      document.getElementById("fCookieText").value = "nauk_at="+(cookies.nauk_at||"")+"; nauk_sid="+(cookies.nauk_sid||"")+"; nauk_rt="+(cookies.nauk_rt||"");
-      document.getElementById("fCk1").value = cookies.nauk_at || "";
-      document.getElementById("fCk2").value = cookies.nauk_sid || "";
-      document.getElementById("fCk3").value = cookies.nauk_rt || "";
-      msg.textContent = "Session captured ("+names.join(", ")+") — adding profile…";
-      addProfile();
+      const note = document.getElementById("fCaptureNote");
+      if(note) note.textContent = "Session captured ("+names.join(", ")+") — press Add profile below to save it.";
+      msg.textContent = "Session captured ("+names.join(", ")+").";
     };
   browserBegin(pid, nm, done, (err)=>{ msg.textContent = "Browser login failed: "+err; }, msg, { quiet: true, body: { email, password: pass } })
     .then(()=>{ document.getElementById("bhPass").value = ""; });
@@ -995,14 +977,12 @@ function browserLoginNew(){
   const nm = document.getElementById("fName").value.trim() || "new profile";
   browserBegin("new", nm,
     (cookies)=>{
-      const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
+      window._capturedCookies = cookies || {};
+      const names = Object.keys(window._capturedCookies).filter(k=>window._capturedCookies[k]);
       document.getElementById("fAuth").value = "server"; toggleAddAuth();
-      document.getElementById("fCookieText").value = "nauk_at="+(cookies.nauk_at||"")+"; nauk_sid="+(cookies.nauk_sid||"")+"; nauk_rt="+(cookies.nauk_rt||"");
-      document.getElementById("fCk1").value = cookies.nauk_at || "";
-      document.getElementById("fCk2").value = cookies.nauk_sid || "";
-      document.getElementById("fCk3").value = cookies.nauk_rt || "";
-      msg.textContent = "Session captured ("+names.join(", ")+") — adding profile…";
-      addProfile();
+      const note = document.getElementById("fCaptureNote");
+      if(note) note.textContent = "Session captured ("+names.join(", ")+") — press Add profile below to save it.";
+      msg.textContent = "Session captured ("+names.join(", ")+").";
     },
     (err)=>{ msg.textContent = "Browser login failed: "+err; },
     msg);
