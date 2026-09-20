@@ -138,7 +138,40 @@
   <details class="sect"><summary><span>Add Naukri profile</span></summary>
   <div class="card">
     <div><label>Profile Name (= CandidateName for files)</label><input id="fName" type="text" placeholder="Sudhir" style="max-width:340px"></div>
-    <div class="muted">Login is saved as session cookies — capture with <b>Login via Browser</b> below, or paste manually. No passwords are stored.</div>
+    <div class="row">
+      <div><label>Link via</label>
+        <select id="fAuth" onchange="toggleAddAuth()">
+          <option value="password">Email + password</option>
+          <option value="server">Server login (captures cookies)</option>
+        </select>
+      </div>
+    </div>
+    <div id="fPassWrap">
+      <div class="row">
+        <div><label>Naukri login email</label><input id="fEmail" type="email" placeholder="you@example.com" oninput="toggleTestCreds()"></div>
+        <div><label>Naukri password</label><input id="fPass" type="password" placeholder="••••••" oninput="toggleTestCreds()"></div>
+      </div>
+      <div class="row" id="fTestCredsWrap" style="display:none">
+        <div><label>&nbsp;</label><button class="teal" onclick="testCreds()">Test creds</button></div>
+        <div><label>&nbsp;</label><button class="ghost" onclick="clearAllSessions()">Clear all saved cookies</button></div>
+      </div>
+      <div id="fOtpWrap" style="display:none">
+        <div class="muted">This account needs 2-step verification — get the code and enter it below.</div>
+        <div class="row">
+          <div><label>Send code to</label><select id="fOtpVia"><option value="mobile">Mobile (SMS)</option><option value="email">Email</option></select></div>
+          <div><label>&nbsp;</label><button class="teal" onclick="sendOtpCode()">Send code</button></div>
+        </div>
+        <div class="row">
+          <div><label>Enter code from Naukri</label><input id="fOtp" type="text" inputmode="numeric" placeholder="6-digit code"></div>
+          <div><label>&nbsp;</label><button onclick="verifyOtpCode()">Verify &amp; check login</button></div>
+        </div>
+      </div>
+    </div>
+    <div id="fServerWrap" style="display:none">
+      <div class="muted">Server login captures cookies automatically — enter creds there once (never stored), complete MFA if asked. The captured <span class="mono">nauk_at</span> (required), <span class="mono">nauk_sid</span>, <span class="mono">nauk_rt</span> land in the three boxes below.</div>
+      <button class="teal" onclick="goServerLogin()">Go to Server login ↓</button>
+    </div>
+    <div class="muted">Login is saved as session cookies — no passwords are stored.</div>
     <div class="muted" style="margin-bottom:8px">Tip: <b>Login via Browser</b> below opens Edge/Chrome for one-click capture — or paste cookies here manually.</div>
     <label>Paste session cookies (one line works: <span class="mono">nauk_at=...; nauk_sid=...; nauk_rt=...</span>)</label>
       <textarea id="fCookieText" class="mono" style="min-height:60px" placeholder="nauk_at=PASTE_HERE; nauk_sid=PASTE_HERE; nauk_rt=PASTE_HERE"></textarea>
@@ -399,6 +432,18 @@ function toggleCardNotify(id){
   document.getElementById("ng-"+id).style.display = t==="group"?"block":"none";
   document.getElementById("np-"+id).style.display = t==="personal"?"block":"none";
 }
+function toggleAddAuth(){
+  const t = document.getElementById("fAuth").value;
+  document.getElementById("fPassWrap").style.display = t === "password" ? "block" : "none";
+  document.getElementById("fServerWrap").style.display = t === "server" ? "block" : "none";
+}
+function goServerLogin(){
+  window._bhProfile = null; // capture lands in this add form
+  const h = document.getElementById("browserHeadlessBlock");
+  if(h){ h.style.display = "block"; h.scrollIntoView({behavior:"smooth",block:"center"}); }
+  const msg = document.getElementById("browserMsgH");
+  if(msg) msg.textContent = "Enter email + password above, Start headless login — captured cookies fill the add form automatically.";
+}
 function toggleCardAuth(id){
   const t = document.getElementById("a-"+id).value;
   document.getElementById("ap-"+id).style.display = t==="password"?"block":"none";
@@ -548,16 +593,23 @@ async function addProfile(){
     if(!document.getElementById("fTaskTitle").checked && !document.getElementById("fTaskResume").checked){ msg.className="msg err"; msg.textContent="Select at least one task: Title and/or Resume."; return; }
     const rf = document.getElementById("fResume").files[0];
     const tf = document.getElementById("fTitles").files[0];
+    const linkMethod = document.getElementById("fAuth").value;
     const body = {
       name: document.getElementById("fName").value.trim(),
       notify: { type: document.getElementById("fNotify").value, group: document.getElementById("fGroup").value, phone: document.getElementById("fPhone").value, customMsg: document.getElementById("fCustomMsg").value },
       tasks: { title: document.getElementById("fTaskTitle").checked, resume: document.getElementById("fTaskResume").checked },
       schedule: readSchedule('f'),
-      titlesText: document.getElementById("fTitlesText").value,
-      auth: { method: "cookies",
-        cookieText: document.getElementById("fCookieText").value,
-        cookies: { nauk_at: document.getElementById("fCk1").value, nauk_sid: document.getElementById("fCk2").value, nauk_rt: document.getElementById("fCk3").value } },
+      titlesText: document.getElementById("fTitlesText").value
     };
+    if(linkMethod === "password"){
+      body.auth = { method: "password",
+        email: document.getElementById("fEmail").value.trim(),
+        password: document.getElementById("fPass").value };
+    } else {
+      body.auth = { method: "cookies",
+        cookieText: document.getElementById("fCookieText").value,
+        cookies: { nauk_at: document.getElementById("fCk1").value, nauk_sid: document.getElementById("fCk2").value, nauk_rt: document.getElementById("fCk3").value } };
+    }
     if(rf){
       if(!/\.pdf$/i.test(rf.name)){ msg.className="msg err"; msg.textContent='Resume must be a .pdf file (you chose "'+rf.name+'").'; return; }
       body.resumeBase64 = await fileAsBase64(rf); body.resumeName = rf.name;
@@ -568,7 +620,8 @@ async function addProfile(){
     }
     const j = await api("POST","/api/profiles",body);
     msg.className="msg ok"; msg.textContent="Added "+j.profile.name+" — first update started.";
-    ["fName","fTitlesText","fCookieText","fCk1","fCk2","fCk3","fCustomMsg"].forEach(id=>document.getElementById(id).value="");
+    ["fName","fEmail","fPass","fTitlesText","fCookieText","fCk1","fCk2","fCk3","fCustomMsg"].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=""; });
+    document.getElementById("fAuth").value = "password"; toggleAddAuth();
     document.getElementById("fTaskTitle").checked = true; document.getElementById("fTaskResume").checked = true;
     document.getElementById("fResume").value=""; document.getElementById("fTitles").value="";
     lastSig = ""; refresh();
@@ -779,7 +832,7 @@ async function browserHeadlessStartNew(){
       }catch(e){ msg.textContent = "Error: "+e.message; }
     } : (cookies)=>{
       const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
-      /* add form is cookies-only now */
+      document.getElementById("fAuth").value = "server"; toggleAddAuth();
       document.getElementById("fCookieText").value = "nauk_at="+(cookies.nauk_at||"")+"; nauk_sid="+(cookies.nauk_sid||"")+"; nauk_rt="+(cookies.nauk_rt||"");
       document.getElementById("fCk1").value = cookies.nauk_at || "";
       document.getElementById("fCk2").value = cookies.nauk_sid || "";
@@ -869,6 +922,61 @@ async function verifyOtpCode() {
     msg.className = "msg err"; msg.textContent = "Error: " + e.message;
   }
 }
+function toggleTestCreds() {
+  const email = document.getElementById("fEmail").value.trim();
+  const pass = document.getElementById("fPass").value;
+  document.getElementById("fTestCredsWrap").style.display = (email && pass) ? "flex" : "none";
+}
+async function testCreds() {
+  const msg = document.getElementById("addMsg");
+  const email = document.getElementById("fEmail").value.trim();
+  const pass = document.getElementById("fPass").value;
+  if (!email || !pass) { msg.className = "msg err"; msg.textContent = "Fill email & password first"; return; }
+  document.getElementById("fOtpWrap").style.display = "none";
+  msg.className = "msg"; msg.textContent = "Checking login with Naukri…";
+  try {
+    const j = await api("POST", "/api/test-creds", { email, password: pass });
+    if (j.needOtp) {
+      msg.className = "msg"; msg.textContent = j.message || "2-step verification needed — get the code below.";
+      window._otpFlow = j.flowId || "";
+      window._otpMfa = !!j.mfa;
+      document.getElementById("fOtpWrap").style.display = "block";
+      return;
+    }
+    msg.className = "msg ok"; msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ") — you can add the profile now.";
+  } catch (e) {
+    msg.className = "msg err"; msg.textContent = "Error: " + e.message;
+  }
+}
+async function sendOtpCode() {
+  const msg = document.getElementById("addMsg");
+  const email = document.getElementById("fEmail").value.trim();
+  const via = document.getElementById("fOtpVia").value;
+  if (!email) { msg.className = "msg err"; msg.textContent = "Fill email first."; return; }
+  msg.className = "msg"; msg.textContent = "Sending code…";
+  try {
+    const j = await api("POST", "/api/test-creds/send-otp", { email, via, flowId: window._otpFlow || undefined });
+    msg.className = "msg ok"; msg.textContent = "Code sent to your " + (j.sentTo === "email" ? "email" : "mobile") + " — enter it below.";
+  } catch (e) {
+    msg.className = "msg err"; msg.textContent = "Error: " + e.message;
+  }
+}
+async function verifyOtpCode() {
+  const msg = document.getElementById("addMsg");
+  const email = document.getElementById("fEmail").value.trim();
+  const otp = document.getElementById("fOtp").value.trim();
+  const via = document.getElementById("fOtpVia").value;
+  if (!otp) { msg.className = "msg err"; msg.textContent = "Enter the code first."; return; }
+  msg.className = "msg"; msg.textContent = "Verifying code…";
+  try {
+    const j = await api("POST", "/api/test-creds/verify-otp", { email, otp, via, flowId: window._otpFlow || undefined });
+    msg.className = "msg ok"; msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ") — you can add the profile now."
+      + (window._otpMfa ? " Note: this account uses 2-step, so background updates can't enter codes — use Server login to capture cookies instead." : "");
+    document.getElementById("fOtpWrap").style.display = "none";
+  } catch (e) {
+    msg.className = "msg err"; msg.textContent = "Error: " + e.message;
+  }
+}
 async function clearAllSessions() {
   if (!confirm("Clear the browser login session + all profiles' saved cookies? Your WhatsApp link stays untouched.")) return;
   const msg = document.getElementById("addMsg");
@@ -888,7 +996,7 @@ function browserLoginNew(){
   browserBegin("new", nm,
     (cookies)=>{
       const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
-      /* add form is cookies-only now */
+      document.getElementById("fAuth").value = "server"; toggleAddAuth();
       document.getElementById("fCookieText").value = "nauk_at="+(cookies.nauk_at||"")+"; nauk_sid="+(cookies.nauk_sid||"")+"; nauk_rt="+(cookies.nauk_rt||"");
       document.getElementById("fCk1").value = cookies.nauk_at || "";
       document.getElementById("fCk2").value = cookies.nauk_sid || "";

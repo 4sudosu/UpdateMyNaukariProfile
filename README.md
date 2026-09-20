@@ -72,10 +72,9 @@ Everything else (update interval, themes, WhatsApp, profiles) lives in the **das
 
 ### ➕ Add a profile
 1. **Profile Name** → becomes `Name_Titles.txt` + `Name_Resume.pdf` (separate files per profile, never mixed).
-2. **Login** — everything is saved as session cookies (no passwords stored, ever):
-    - **Login via Browser** → a real Edge/Chrome window opens, you log in any way you like (including Google) — session auto-captured.
-    - **Server login** → enter Naukri email + password once (one-time use) for headless servers like Render, with built-in MFA code step.
-    - **Paste manually** → paste `nauk_at`/`nauk_sid`/`nauk_rt` (steps included in the app) — verified instantly.
+2. **Link via** — pick one (default: email + password):
+    - **Email + password** → optional **Test creds** button (checks the login live, handles 2-step OTP with code entry).
+    - **Server login** → enter creds once in the browser card below (never stored); a headless browser logs in, handles MFA codes, and captures `nauk_at` (required), `nauk_sid`, `nauk_rt` into the three boxes automatically. Manual paste works too.
 3. Upload **resume `.pdf`** (verified) + **titles `.txt`** (one headline per line, or paste).
 4. Tick **Update Title / Update Resume** tasks, set WhatsApp notifications (optional).
 
