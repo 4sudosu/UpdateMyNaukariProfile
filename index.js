@@ -244,24 +244,24 @@ function otpHeaders() {
   };
 }
 
-async function naukriSendOtp(username, via) {
+async function naukriSendOtp(username, via, flowId) {
   const isMobile = via !== "email";
   const res = await fetch(OTP_SEND_URL, {
     method: "POST",
     headers: otpHeaders(),
-    body: JSON.stringify({ username, flowId: "login", isLoginByEmail: !isMobile, isLoginByMobile: isMobile }),
+    body: JSON.stringify({ username, flowId: flowId || "login", isLoginByEmail: !isMobile, isLoginByMobile: isMobile }),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`OTP send failed (${res.status}): ${text.slice(0, 200)}`);
   return true;
 }
 
-async function naukriVerifyOtp(username, otp, via) {
+async function naukriVerifyOtp(username, otp, via, flowId) {
   const isMobile = via !== "email";
   const res = await fetch(OTP_VERIFY_URL, {
     method: "POST",
     headers: otpHeaders(),
-    body: JSON.stringify({ username, token: String(otp).trim(), flowId: "login", isLoginByEmail: !isMobile, isLoginByMobile: isMobile }),
+    body: JSON.stringify({ username, token: String(otp).trim(), flowId: flowId || "login", isLoginByEmail: !isMobile, isLoginByMobile: isMobile }),
   });
   const text = await res.text();
   let data = {};
@@ -305,8 +305,19 @@ async function testCredsLogin(email, password) {
     const pid = await fetchProfileId(ctx, token);
     return { status: "ok", profileId: pid };
   }
-  if (/otp|verif|two[\s-]?step|two[\s-]?factor|challenge|authenticator|verify/i.test(text)) {
-    return { status: "otp" };
+  // 2-step / MFA challenge? Pass the server's own flowId + medium back to the UI.
+  let data = {};
+  try {
+    data = JSON.parse(text);
+  } catch {}
+  if (/mfa|otp|verif|two[\s-]?step|two[\s-]?factor|challenge|authenticator|verify/i.test(text)) {
+    return {
+      status: "otp",
+      mfa: /mfa/i.test(text),
+      flowId: data.flowId || "",
+      medium: data.medium || "",
+      maskedEmail: data.email || "",
+    };
   }
   throw new Error(`Login failed (${res.status}): ${text.slice(0, 300)}`);
 }
@@ -1176,10 +1187,16 @@ const server = http.createServer(async (req, res) => {
       try {
         const r = await testCredsLogin(email, password);
         if (r.status === "otp") {
+          const where = r.maskedEmail ? ` (code goes to ${r.medium || "your"} ${r.maskedEmail})` : "";
           sendJson(res, 200, {
             ok: false,
             needOtp: true,
-            message: "This account needs 2-step verification — Naukri wants a code. Pick where to receive it, press Send code, then enter the code.",
+            mfa: !!r.mfa,
+            flowId: r.flowId || "",
+            medium: r.medium || "",
+            message: r.mfa
+              ? `This account needs 2-step verification${where} — enter the code below (or press Send code to resend).`
+              : "This account needs 2-step verification — Naukri wants a code. Pick where to receive it, press Send code, then enter the code.",
           });
         } else {
           sendJson(res, 200, { ok: true, profileId: r.profileId, message: "Able to login" });
@@ -1197,7 +1214,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       try {
-        await naukriSendOtp(body.email, body.via === "email" ? "email" : "mobile");
+        await naukriSendOtp(body.email, body.via === "email" ? "email" : "mobile", body.flowId);
         sendJson(res, 200, { ok: true, sentTo: body.via === "email" ? "email" : "mobile" });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e.message });
@@ -1212,7 +1229,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       try {
-        const pid = await naukriVerifyOtp(body.email, body.otp, body.via === "email" ? "email" : "mobile");
+        const pid = await naukriVerifyOtp(body.email, body.otp, body.via === "email" ? "email" : "mobile", body.flowId);
         sendJson(res, 200, { ok: true, profileId: pid, message: "Able to login" });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e.message });
