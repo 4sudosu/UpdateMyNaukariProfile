@@ -169,10 +169,9 @@
     </div>
     <div id="fServerWrap" style="display:none">
       <div class="muted">Server login captures the session automatically — enter creds there once (never stored), complete MFA if asked, then press <b>Add profile</b> here.</div>
-      <button class="teal" onclick="goServerLogin()">Go to Server login ↓</button>
     </div>
     <div class="muted">Login is saved as session cookies — no passwords are stored.</div>
-    <div class="muted" id="fCaptureNote">No session captured yet — capture one with <b>Server login</b> above or <b>Login via Browser</b> below, then press <b>Add profile</b>.</div>
+    <div class="muted" id="fCaptureNote">No session captured yet — capture one with <b>Server login</b> below, then press <b>Add profile</b>.</div>
   <div class="card" id="browserCard" style="background:var(--ghostbg);border-color:var(--cardbrd)">
     <div id="browserHeadlessBlock">
       <b>Server login</b> <span class="muted">works everywhere incl. Render — enter Naukri creds once (never stored). A headless browser logs in, captures the session, then the profile is added.</span>
@@ -181,6 +180,7 @@
         <div><label>Password (one-time use)</label><input id="bhPass" type="password" placeholder="••••••"></div>
       </div>
       <button class="teal" onclick="browserHeadlessStartNew()">Start headless login</button>
+      <button class="ghost" onclick="testHeadlessCreds()">Test creds</button>
       <button class="ghost" onclick="browserCancel()">Cancel</button>
       <div id="browserMsgH" class="msg"></div>
       <div id="bhOtpWrap" style="display:none">
@@ -412,13 +412,6 @@ function toggleAddAuth(){
   document.getElementById("fServerWrap").style.display = t === "server" ? "block" : "none";
   const bc = document.getElementById("browserCard");
   if(bc) bc.style.display = t === "server" ? "block" : "none";
-}
-function goServerLogin(){
-  window._bhProfile = null; // capture lands in this add form
-  const h = document.getElementById("browserHeadlessBlock");
-  if(h){ h.style.display = "block"; h.scrollIntoView({behavior:"smooth",block:"center"}); }
-  const msg = document.getElementById("browserMsgH");
-  if(msg) msg.textContent = "Enter email + password above, Start headless login — captured cookies fill the add form automatically.";
 }
 function toggleCardAuth(id){
   const t = document.getElementById("a-"+id).value;
@@ -770,7 +763,7 @@ async function browserPoll(){
     const b = s.browser || {};
     if(!b.active){ clearInterval(browserTimer); browserTimer = null; return; }
     if(window._browserMsgEl){
-      if(b.status === "otp"){ window._browserMsgEl.textContent = "Naukri asks for a verification code — enter it below."; showOtpBox(true); }
+      if(b.status === "otp"){ window._browserMsgEl.textContent = "Naukri asks for a verification code — enter it below.";       window._otpMode = "browser"; showOtpBox(true); }
       else window._browserMsgEl.textContent = "Waiting for browser login… ("+b.elapsedSec+"s)";
     }
     if(b.status === "done"){
@@ -821,10 +814,39 @@ async function browserHeadlessStartNew(){
   browserBegin(pid, nm, done, (err)=>{ msg.textContent = "Browser login failed: "+err; }, msg, { quiet: true, body: { email, password: pass } })
     .then(()=>{ document.getElementById("bhPass").value = ""; });
 }
+async function testHeadlessCreds(){
+  const msg = document.getElementById("browserMsgH");
+  const email = document.getElementById("bhEmail").value.trim();
+  const pass = document.getElementById("bhPass").value;
+  if(!email || !pass){ msg.textContent = "Fill email + password first (used once, never stored)."; return; }
+  msg.textContent = "Checking login with Naukri…";
+  try{
+    const j = await api("POST","/api/test-creds",{email, password:pass});
+    if(j.needOtp){
+      window._otpMode = "test";
+      window._testOtp = { email, via: "mobile", flowId: j.flowId || "" };
+      showOtpBox(true);
+      msg.textContent = (j.message || "2-step verification needed.") + " Enter the code below.";
+      return;
+    }
+    msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ").";
+  }catch(e){ msg.textContent = "Error: " + e.message; }
+}
 async function browserHeadlessOtp(){
   const code = document.getElementById("bhOtp").value.trim();
   const msg = document.getElementById("browserMsgH");
   if(!code){ msg.textContent = "Enter the code first."; return; }
+  if(window._otpMode === "test" && window._testOtp){
+    msg.textContent = "Verifying code…";
+    try{
+      const t = window._testOtp;
+      const j = await api("POST","/api/test-creds/verify-otp",{email:t.email, otp:code, via:t.via, flowId:t.flowId});
+      document.getElementById("bhOtp").value = "";
+      showOtpBox(false); window._otpMode = null; window._testOtp = null;
+      msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ").";
+    }catch(e){ msg.textContent = "Error: " + e.message; }
+    return;
+  }
   msg.textContent = "Submitting code…";
   try{
     await api("POST","/api/browser/otp",{code});
