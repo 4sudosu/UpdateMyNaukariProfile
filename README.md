@@ -14,7 +14,7 @@ Keep your **Naukri.com** profile fresh on autopilot — rotating **Resume Headli
 
 | Feature | Details |
 |---|---|
-| 👥 **Multi-profile** | Add unlimited Naukri profiles from the dashboard — everything stored as session cookies (browser capture, server login, or paste) |
+| 👥 **Multi-profile** | Add unlimited Naukri profiles from the dashboard — email+password or pasted session cookies |
 | 🔁 **Headline rotation** | Cycles `Name_Titles.txt` sequentially, loops forever, never deletes a line |
 | 📄 **Dated resume uploads** | Re-uploads as `Name_Resume_20Sept.pdf` every cycle (delete → upload, like the site) |
 | ☑️ **Per-profile tasks** | Title only, Resume only, or both — editable anytime |
@@ -74,7 +74,7 @@ Everything else (update interval, themes, WhatsApp, profiles) lives in the **das
 1. **Profile Name** → becomes `Name_Titles.txt` + `Name_Resume.pdf` (separate files per profile, never mixed).
 2. **Link via** — pick one (default: email + password):
     - **Email + password** → optional **Test creds** button (checks the login live, handles 2-step OTP with code entry).
-    - **Server login** → enter creds once in the browser card below (never stored); a headless browser logs in, handles MFA codes, and captures `nauk_at` (required), `nauk_sid`, `nauk_rt` into the three boxes automatically. Manual paste works too.
+    - **Session cookies** → paste `nauk_at` (**required**), `nauk_sid`, `nauk_rt` (**recommended**) — verified instantly. Get them in Chrome/Edge: log in at naukri.com → **F12 → Application → Cookies → https://www.naukri.com** → double-click each Value → copy. (If a cookie is HttpOnly, `document.cookie` hides it — copy it from the Application tab.)
 3. Upload **resume `.pdf`** (verified) + **titles `.txt`** (one headline per line, or paste).
 4. Tick **Update Title / Update Resume** tasks, set WhatsApp notifications (optional).
 
@@ -112,7 +112,7 @@ Your browser cached the previous page. Hard-refresh once:
 - Windows/Linux: **CTRL + SHIFT + R**
 - Mac: **CMD + SHIFT + R**
 
-This matters most on Render after a redeploy — e.g. a missing **Server login** form means you're looking at the cached page; hard-refresh to reveal it. (The server now sends `no-store` headers, so fresh loads never go stale — only that one hard refresh is needed.)
+This matters most on Render after a redeploy — e.g. a missing section means you're looking at the cached page; hard-refresh to reveal it. (The server now sends `no-store` headers, so fresh loads never go stale — only that one hard refresh is needed.)
 
 **"No visible browser on this server"?**
 Expected on Render/cloud (no screen, no Chrome). Use the **Server login** form right below that message: enter Naukri email + password once (never stored) — a headless browser logs in, captures the session, and supports OTP codes if Naukri asks.

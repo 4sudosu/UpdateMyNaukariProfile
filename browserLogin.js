@@ -132,7 +132,7 @@ async function startBrowserLogin(profileId, profileName) {
   const puppeteer = needPuppeteer();
   const exe = findChrome();
   if (!exe) {
-    throw new Error("No visible browser on this server. Enter email + password below for headless login instead.");
+    throw new Error("No visible browser on this server (needs a screen + Chrome/Edge). Paste the session cookies manually instead.");
   }
   if (!fs.existsSync(BROWSER_PROFILE_DIR)) fs.mkdirSync(BROWSER_PROFILE_DIR, { recursive: true });
   const browser = await launchWithFallback(puppeteer, {

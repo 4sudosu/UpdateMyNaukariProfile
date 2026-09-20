@@ -1481,28 +1481,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // POST /api/browser/start — visible window (local) or headless form login (servers).
-    // Send {email,password} for headless; omit them for the manual window flow.
+    // POST /api/browser/start — open a real Edge/Chrome window; you log in, cookies auto-captured.
+    // (Local machines only — needs a screen. Servers: paste cookies manually.)
     if (url === "/api/browser/start" && req.method === "POST") {
       try {
-        if (body.email && body.password) {
-          const r = await bl.startHeadlessLogin(body.profileId, body.profileName, body.email, body.password);
-          sendJson(res, 200, { ok: true, started: true, mode: r.mode, hint: "Headless login running on the server — watch the status below" });
-        } else {
-          await bl.startBrowserLogin(body.profileId, body.profileName);
-          sendJson(res, 200, { ok: true, started: true, mode: "window", hint: "Log in to Naukri inside the opened Chrome window — the session is captured automatically" });
-        }
-      } catch (e) {
-        sendJson(res, 400, { ok: false, error: e.message });
-      }
-      return;
-    }
-
-    // POST /api/browser/otp — submit the Naukri verification code (headless flow)
-    if (url === "/api/browser/otp" && req.method === "POST") {
-      try {
-        const r = await bl.submitOtp(body.code);
-        sendJson(res, 200, { ok: true, ...r });
+        await bl.startBrowserLogin(body.profileId, body.profileName);
+        sendJson(res, 200, { ok: true, started: true, hint: "Log in to Naukri inside the opened window — the session is captured automatically" });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e.message });
       }
