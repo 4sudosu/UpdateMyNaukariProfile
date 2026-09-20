@@ -14,7 +14,7 @@ Keep your **Naukri.com** profile fresh on autopilot — rotating **Resume Headli
 
 | Feature | Details |
 |---|---|
-| 👥 **Multi-profile** | Add unlimited Naukri profiles from the dashboard — email+password, session cookies, or one-click browser login |
+| 👥 **Multi-profile** | Add unlimited Naukri profiles from the dashboard — everything stored as session cookies (browser capture, server login, or paste) |
 | 🔁 **Headline rotation** | Cycles `Name_Titles.txt` sequentially, loops forever, never deletes a line |
 | 📄 **Dated resume uploads** | Re-uploads as `Name_Resume_20Sept.pdf` every cycle (delete → upload, like the site) |
 | ☑️ **Per-profile tasks** | Title only, Resume only, or both — editable anytime |
@@ -72,10 +72,10 @@ Everything else (update interval, themes, WhatsApp, profiles) lives in the **das
 
 ### ➕ Add a profile
 1. **Profile Name** → becomes `Name_Titles.txt` + `Name_Resume.pdf` (separate files per profile, never mixed).
-2. **Link via** — pick one:
-   - **Email + password** → optional **Test creds** button (checks the login live, handles 2-step OTP with code entry).
-   - **Session cookies** → paste `nauk_at`/`nauk_sid`/`nauk_rt` (steps included in the app) — verified instantly.
-   - **Login via Browser** → real Chrome opens, you log in manually, session auto-captured. Zero stored passwords.
+2. **Login** — everything is saved as session cookies (no passwords stored, ever):
+    - **Login via Browser** → a real Edge/Chrome window opens, you log in any way you like (including Google) — session auto-captured.
+    - **Server login** → enter Naukri email + password once (one-time use) for headless servers like Render, with built-in MFA code step.
+    - **Paste manually** → paste `nauk_at`/`nauk_sid`/`nauk_rt` (steps included in the app) — verified instantly.
 3. Upload **resume `.pdf`** (verified) + **titles `.txt`** (one headline per line, or paste).
 4. Tick **Update Title / Update Resume** tasks, set WhatsApp notifications (optional).
 

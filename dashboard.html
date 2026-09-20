@@ -32,6 +32,7 @@
   .login-card button{width:100%;margin-top:12px;padding:12px;font-size:15px;font-weight:600;border:0;border-radius:10px;
     cursor:pointer;color:#fff;background:linear-gradient(135deg,#6366f1,#a855f7)}
   .login-card button:hover{filter:brightness(1.1)}
+  .login-card button.linklike{background:none;text-decoration:underline;font-size:13px;font-weight:400;padding:6px;margin-top:4px;opacity:.85}
   #loginMsg{min-height:20px;margin-top:10px;font-size:13px;color:#fecaca;white-space:pre-wrap}
   .shake{animation:shake .4s}
   @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
@@ -117,6 +118,7 @@
     <p>Enter your panel password to continue</p>
     <input id="loginPw" type="password" placeholder="Panel password" autocomplete="off" onkeydown="if(event.key==='Enter')login()">
     <button onclick="login()">Unlock dashboard</button>
+    <button class="linklike" onclick="clearCacheReload()">Clear cache &amp; reload</button>
     <div id="loginMsg"></div>
   </div>
 </div>
@@ -134,37 +136,8 @@
 
   <details class="sect"><summary><span>Add Naukri profile</span></summary>
   <div class="card">
-    <div class="row">
-      <div><label>Profile Name (= CandidateName for files)</label><input id="fName" type="text" placeholder="Sudhir"></div>
-      <div><label>Link via</label>
-        <select id="fAuth" onchange="toggleAuthTargets('f')">
-          <option value="password">Email + password</option>
-          <option value="cookies">Session cookies</option>
-        </select>
-      </div>
-    </div>
-    <div id="fPassWrap">
-      <div class="row">
-        <div><label>Naukri login email</label><input id="fEmail" type="email" placeholder="you@example.com" oninput="toggleTestCreds()"></div>
-        <div><label>Naukri password</label><input id="fPass" type="password" placeholder="••••••" oninput="toggleTestCreds()"></div>
-      </div>
-      <div class="row" id="fTestCredsWrap" style="display:none">
-        <div><label>&nbsp;</label><button class="teal" onclick="testCreds()">Test creds</button></div>
-        <div><label>&nbsp;</label><button class="ghost" onclick="clearAllSessions()">Clear all saved cookies</button></div>
-      </div>
-      <div id="fOtpWrap" style="display:none">
-        <div class="muted">This account needs 2-step verification — get the code and enter it below.</div>
-        <div class="row">
-          <div><label>Send code to</label><select id="fOtpVia"><option value="mobile">Mobile (SMS)</option><option value="email">Email</option></select></div>
-          <div><label>&nbsp;</label><button class="teal" onclick="sendOtpCode()">Send code</button></div>
-        </div>
-        <div class="row">
-          <div><label>Enter code from Naukri</label><input id="fOtp" type="text" inputmode="numeric" placeholder="6-digit code"></div>
-          <div><label>&nbsp;</label><button onclick="verifyOtpCode()">Verify &amp; check login</button></div>
-        </div>
-      </div>
-    </div>
-    <div id="fCookieWrap" style="display:none">
+    <div><label>Profile Name (= CandidateName for files)</label><input id="fName" type="text" placeholder="Sudhir" style="max-width:340px"></div>
+    <div class="muted">Login is saved as session cookies — capture with <b>Login via Browser</b> below, or paste manually. No passwords are stored.</div>
     <div class="muted" style="margin-bottom:8px">Tip: <b>Login via Browser</b> below opens Edge/Chrome for one-click capture — or paste cookies here manually.</div>
     <label>Paste session cookies (one line works: <span class="mono">nauk_at=...; nauk_sid=...; nauk_rt=...</span>)</label>
       <textarea id="fCookieText" class="mono" style="min-height:60px" placeholder="nauk_at=PASTE_HERE; nauk_sid=PASTE_HERE; nauk_rt=PASTE_HERE"></textarea>
@@ -185,7 +158,6 @@
           <span class="mono">["nauk_at","nauk_sid","nauk_rt"].forEach(n=>{const v=document.cookie.split("; ").find(r=>r.startsWith(n+"="));console.log(n+"="+(v?v.split("=").slice(1).join("="):"(not readable here — copy it from the Application tab)"))});</span>
         </div>
       </details>
-    </div>
   <div class="card" style="background:var(--ghostbg);border-color:var(--cardbrd)">
     <div id="browserWindowBlock">
       <b>No password, no copy-paste?</b> <span class="muted">Log in inside a real Chrome window — the session is captured automatically, then the profile is added. (Needs a screen + Chrome — your own computer.)</span><br>
@@ -377,6 +349,15 @@ async function login(){
   }
 }
 function logout(){ localStorage.removeItem(LS_KEY); lastSig=""; showLogin(); }
+// Force a fresh copy of the page (same as Ctrl+Shift+R) without losing login/theme.
+function clearCacheReload(){
+  const m = document.getElementById("loginMsg");
+  if(m) m.textContent = "Reloading fresh copy…";
+  try{
+    if("caches" in window){ caches.keys().then(ks=>ks.forEach(k=>caches.delete(k))).catch(()=>{}); }
+  }catch(e){}
+  window.location.href = window.location.pathname + "?fresh=" + Date.now();
+}
 /* ---------- helpers ---------- */
 function fmt(n){ return (n<10?"0":"")+n; }
 function countdownText(iso, running){
@@ -564,7 +545,6 @@ async function addProfile(){
   const msg = document.getElementById("addMsg"); msg.className="msg"; msg.textContent="Adding…";
   try{
     if(!document.getElementById("fTaskTitle").checked && !document.getElementById("fTaskResume").checked){ msg.className="msg err"; msg.textContent="Select at least one task: Title and/or Resume."; return; }
-    const method = document.getElementById("fAuth").value;
     const rf = document.getElementById("fResume").files[0];
     const tf = document.getElementById("fTitles").files[0];
     const body = {
@@ -572,17 +552,11 @@ async function addProfile(){
       notify: { type: document.getElementById("fNotify").value, group: document.getElementById("fGroup").value, phone: document.getElementById("fPhone").value, customMsg: document.getElementById("fCustomMsg").value },
       tasks: { title: document.getElementById("fTaskTitle").checked, resume: document.getElementById("fTaskResume").checked },
       schedule: readSchedule('f'),
-      titlesText: document.getElementById("fTitlesText").value
-    };
-    if(method === "cookies"){
-      body.auth = { method: "cookies",
+      titlesText: document.getElementById("fTitlesText").value,
+      auth: { method: "cookies",
         cookieText: document.getElementById("fCookieText").value,
-        cookies: { nauk_at: document.getElementById("fCk1").value, nauk_sid: document.getElementById("fCk2").value, nauk_rt: document.getElementById("fCk3").value } };
-    } else {
-      body.auth = { method: "password",
-        email: document.getElementById("fEmail").value.trim(),
-        password: document.getElementById("fPass").value };
-    }
+        cookies: { nauk_at: document.getElementById("fCk1").value, nauk_sid: document.getElementById("fCk2").value, nauk_rt: document.getElementById("fCk3").value } },
+    };
     if(rf){
       if(!/\.pdf$/i.test(rf.name)){ msg.className="msg err"; msg.textContent='Resume must be a .pdf file (you chose "'+rf.name+'").'; return; }
       body.resumeBase64 = await fileAsBase64(rf); body.resumeName = rf.name;
@@ -593,7 +567,7 @@ async function addProfile(){
     }
     const j = await api("POST","/api/profiles",body);
     msg.className="msg ok"; msg.textContent="Added "+j.profile.name+" — first update started.";
-    ["fName","fPass","fTitlesText","fCookieText","fCk1","fCk2","fCk3","fCustomMsg"].forEach(id=>document.getElementById(id).value="");
+    ["fName","fTitlesText","fCookieText","fCk1","fCk2","fCk3","fCustomMsg"].forEach(id=>document.getElementById(id).value="");
     document.getElementById("fTaskTitle").checked = true; document.getElementById("fTaskResume").checked = true;
     document.getElementById("fResume").value=""; document.getElementById("fTitles").value="";
     lastSig = ""; refresh();
@@ -804,7 +778,7 @@ async function browserHeadlessStartNew(){
       }catch(e){ msg.textContent = "Error: "+e.message; }
     } : (cookies)=>{
       const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
-      document.getElementById("fAuth").value = "cookies"; toggleAuthTargets("f");
+      /* add form is cookies-only now */
       document.getElementById("fCookieText").value = "nauk_at="+(cookies.nauk_at||"")+"; nauk_sid="+(cookies.nauk_sid||"")+"; nauk_rt="+(cookies.nauk_rt||"");
       document.getElementById("fCk1").value = cookies.nauk_at || "";
       document.getElementById("fCk2").value = cookies.nauk_sid || "";
@@ -913,7 +887,7 @@ function browserLoginNew(){
   browserBegin("new", nm,
     (cookies)=>{
       const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
-      document.getElementById("fAuth").value = "cookies"; toggleAuthTargets("f");
+      /* add form is cookies-only now */
       document.getElementById("fCookieText").value = "nauk_at="+(cookies.nauk_at||"")+"; nauk_sid="+(cookies.nauk_sid||"")+"; nauk_rt="+(cookies.nauk_rt||"");
       document.getElementById("fCk1").value = cookies.nauk_at || "";
       document.getElementById("fCk2").value = cookies.nauk_sid || "";
