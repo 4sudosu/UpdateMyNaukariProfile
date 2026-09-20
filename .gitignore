@@ -2,5 +2,6 @@ node_modules/
 .env
 wa-session/
 browser-profile/
+browser-profile-headless/
 profiles/
 settings.json

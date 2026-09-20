@@ -191,10 +191,29 @@
       </details>
     </div>
   <div class="card" style="background:var(--ghostbg);border-color:var(--cardbrd)">
-    <b>No password, no copy-paste?</b> <span class="muted">Log in inside a real Chrome window — the session is captured automatically, then the profile is added.</span><br>
-    <button class="teal" onclick="browserLoginNew()">Login via Browser</button>
-    <button class="ghost" onclick="browserCancel()">Cancel</button>
-    <div id="browserMsg" class="msg"></div>
+    <div id="browserWindowBlock">
+      <b>No password, no copy-paste?</b> <span class="muted">Log in inside a real Chrome window — the session is captured automatically, then the profile is added.</span><br>
+      <button class="teal" onclick="browserLoginNew()">Login via Browser</button>
+      <button class="ghost" onclick="browserCancel()">Cancel</button>
+      <div id="browserMsg" class="msg"></div>
+    </div>
+    <div id="browserHeadlessBlock" style="display:none">
+      <b>Server login</b> <span class="muted">this server has no screen — enter Naukri creds once (never stored). A headless browser logs in, captures the session, then the profile is added.</span>
+      <div class="row">
+        <div><label>Naukri email</label><input id="bhEmail" type="email" placeholder="you@example.com"></div>
+        <div><label>Password (one-time use)</label><input id="bhPass" type="password" placeholder="••••••"></div>
+      </div>
+      <button class="teal" onclick="browserHeadlessStartNew()">Start headless login</button>
+      <button class="ghost" onclick="browserCancel()">Cancel</button>
+      <div id="browserMsgH" class="msg"></div>
+      <div id="bhOtpWrap" style="display:none">
+        <label>Naukri asked for a code — enter it</label>
+        <div class="row">
+          <div><input id="bhOtp" type="text" inputmode="numeric" placeholder="6-digit code"></div>
+          <div><label>&nbsp;</label><button onclick="browserHeadlessOtp()">Submit code</button></div>
+        </div>
+      </div>
+    </div>
   </div>
   <div class="row">
     <div><label>Resume PDF (verified .pdf → <span class="mono">Name_Resume.pdf</span>)</label><input id="fResume" type="file" accept=".pdf,application/pdf"></div>
@@ -706,27 +725,35 @@ async function pair(){
 }
 /* ---------- browser login (real Chrome, auto-captured session) ---------- */
 let browserTimer = null;
-async function browserBegin(profileId, profileName, onDone, onFail, msgEl){
+async function browserBegin(profileId, profileName, onDone, onFail, msgEl, opts){
+  opts = opts || {};
   try{
-    msgEl.textContent = "Opening Chrome — log in to Naukri inside that window…";
-    await api("POST","/api/browser/start",{profileId, profileName});
+    if(!opts.quiet) msgEl.textContent = "Opening Chrome — log in to Naukri inside that window…";
+    await api("POST","/api/browser/start",Object.assign({profileId, profileName}, opts.body || {}));
     window._onBrowserDone = onDone; window._onBrowserFail = onFail; window._browserMsgEl = msgEl;
     if(browserTimer) clearInterval(browserTimer);
     browserTimer = setInterval(browserPoll, 2500);
   }catch(e){ msgEl.textContent = "Error: "+e.message; }
+}
+function showOtpBox(on){
+  const w = document.getElementById("bhOtpWrap");
+  if(w) w.style.display = on ? "block" : "none";
 }
 async function browserPoll(){
   try{
     const s = await api("GET","/api/browser/status");
     const b = s.browser || {};
     if(!b.active){ clearInterval(browserTimer); browserTimer = null; return; }
-    if(window._browserMsgEl) window._browserMsgEl.textContent = "Waiting for browser login… ("+b.elapsedSec+"s of 5 min)";
+    if(window._browserMsgEl){
+      if(b.status === "otp"){ window._browserMsgEl.textContent = "Naukri asks for a verification code — enter it below."; showOtpBox(true); }
+      else window._browserMsgEl.textContent = "Waiting for browser login… ("+b.elapsedSec+"s)";
+    }
     if(b.status === "done"){
-      clearInterval(browserTimer); browserTimer = null;
+      clearInterval(browserTimer); browserTimer = null; showOtpBox(false);
       const c = await api("GET","/api/browser/cookies");
       if(window._onBrowserDone) window._onBrowserDone(c.cookies);
-    } else if(b.status === "timeout" || b.status === "closed"){
-      clearInterval(browserTimer); browserTimer = null;
+    } else if(b.status === "timeout" || b.status === "closed" || b.status === "error"){
+      clearInterval(browserTimer); browserTimer = null; showOtpBox(false);
       if(window._onBrowserFail) window._onBrowserFail(b.error || b.status);
     }
   }catch(e){ clearInterval(browserTimer); browserTimer = null; }
@@ -734,7 +761,62 @@ async function browserPoll(){
 async function browserCancel(){
   try{ await api("POST","/api/browser/cancel",{}); }catch(e){}
   if(browserTimer){ clearInterval(browserTimer); browserTimer = null; }
+  window._bhProfile = null; showOtpBox(false);
   document.getElementById("browserMsg").textContent = "Cancelled.";
+  const h = document.getElementById("browserMsgH");
+  if(h) h.textContent = "Cancelled.";
+}
+async function browserHeadlessStartNew(){
+  const msg = document.getElementById("browserMsgH");
+  const email = document.getElementById("bhEmail").value.trim();
+  const pass = document.getElementById("bhPass").value;
+  if(!email || !pass){ msg.textContent = "Fill email + password first (used once, never stored)."; return; }
+  const ctx = window._bhProfile || null;
+  const pid = ctx ? ctx.id : "new";
+  const nm = ctx ? "profile" : (document.getElementById("fName").value.trim() || "new profile");
+  msg.textContent = "Starting headless login on the server…";
+  showOtpBox(false);
+  const done = ctx ? async (cookies)=>{
+      const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
+      msg.textContent = "Session captured ("+names.join(", ")+") — saving to card…";
+      try{
+        await api("PUT","/api/profiles/"+ctx.id+"/auth",{auth:{method:"cookies",cookies}});
+        msg.textContent = "Browser session saved (verified live).";
+        window._bhProfile = null; lastSig=""; refresh();
+      }catch(e){ msg.textContent = "Error: "+e.message; }
+    } : (cookies)=>{
+      const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
+      document.getElementById("fAuth").value = "cookies"; toggleAuthTargets("f");
+      document.getElementById("fCookieText").value = "nauk_at="+(cookies.nauk_at||"")+"; nauk_sid="+(cookies.nauk_sid||"")+"; nauk_rt="+(cookies.nauk_rt||"");
+      document.getElementById("fCk1").value = cookies.nauk_at || "";
+      document.getElementById("fCk2").value = cookies.nauk_sid || "";
+      document.getElementById("fCk3").value = cookies.nauk_rt || "";
+      msg.textContent = "Session captured ("+names.join(", ")+") — adding profile…";
+      addProfile();
+    };
+  browserBegin(pid, nm, done, (err)=>{ msg.textContent = "Browser login failed: "+err; }, msg, { quiet: true, body: { email, password: pass } })
+    .then(()=>{ document.getElementById("bhPass").value = ""; });
+}
+async function browserHeadlessOtp(){
+  const code = document.getElementById("bhOtp").value.trim();
+  const msg = document.getElementById("browserMsgH");
+  if(!code){ msg.textContent = "Enter the code first."; return; }
+  msg.textContent = "Submitting code…";
+  try{
+    await api("POST","/api/browser/otp",{code});
+    document.getElementById("bhOtp").value = "";
+    msg.textContent = "Code submitted — watching result…";
+  }catch(e){ msg.textContent = "Error: "+e.message; }
+}
+async function adaptBrowserUI(){
+  try{
+    const s = await api("GET","/api/browser/status");
+    const headed = !s.browser || s.browser.headed !== false;
+    const w = document.getElementById("browserWindowBlock");
+    const h = document.getElementById("browserHeadlessBlock");
+    if(w) w.style.display = headed ? "block" : "none";
+    if(h) h.style.display = headed ? "none" : "block";
+  }catch(e){}
 }
 function toggleTestCreds() {
   const email = document.getElementById("fEmail").value.trim();
@@ -823,7 +905,14 @@ function browserLoginNew(){
 }
 function browserLoginRefresh(id){
   const m = document.getElementById("m-"+id);
-  browserBegin(id, "profile",
+  api("GET","/api/browser/status").then(s=>{
+    if(s.browser && s.browser.headed === false){
+      window._bhProfile = { id };
+      m.textContent = "This server has no screen — use the headless login in the Add section (session will save to this card).";
+      document.getElementById("browserHeadlessBlock").scrollIntoView({behavior:"smooth",block:"center"});
+      return;
+    }
+    browserBegin(id, "profile",
     async (cookies)=>{
       const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
       m.textContent = "Session captured ("+names.join(", ")+") — saving…";
@@ -834,11 +923,12 @@ function browserLoginRefresh(id){
     },
     (err)=>{ m.textContent = "Browser login failed: "+err; },
     m);
+  }).catch(e=>{ m.textContent = "Error: "+e.message; });
 }
 /* ---------- boot: nothing visible without login ---------- */
 buildSwatches();
 applyTheme(currentTheme(), false);
-if(token()){ refresh(); } else { showLogin(); }
+if(token()){ refresh(); adaptBrowserUI(); } else { showLogin(); }
 setInterval(refresh,10000); setInterval(tick,1000);
 </script>
 </body>
