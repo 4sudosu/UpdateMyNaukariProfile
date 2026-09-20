@@ -165,11 +165,7 @@
       </div>
     </div>
     <div id="fCookieWrap" style="display:none">
-    <div style="background:var(--ghostbg);border:1px solid var(--cardbrd);border-radius:10px;padding:12px;margin-bottom:10px">
-      <b>Fastest:</b> <span class="muted">already logged in on naukri.com in this browser?</span><br>
-      <a href="#" onclick="location.href=BMLET;return false;"><b>Naukri session capture — drag me to your bookmarks bar, then click me while on naukri.com</b></a>
-      <div class="muted">It copies your session — paste it in the box below. Any missing cookie is named so you can grab it from DevTools.</div>
-    </div>
+    <div class="muted" style="margin-bottom:8px">Tip: <b>Login via Browser</b> below opens Edge/Chrome for one-click capture — or paste cookies here manually.</div>
     <label>Paste session cookies (one line works: <span class="mono">nauk_at=...; nauk_sid=...; nauk_rt=...</span>)</label>
       <textarea id="fCookieText" class="mono" style="min-height:60px" placeholder="nauk_at=PASTE_HERE; nauk_sid=PASTE_HERE; nauk_rt=PASTE_HERE"></textarea>
       <div class="row">
@@ -192,13 +188,14 @@
     </div>
   <div class="card" style="background:var(--ghostbg);border-color:var(--cardbrd)">
     <div id="browserWindowBlock">
-      <b>No password, no copy-paste?</b> <span class="muted">Log in inside a real Chrome window — the session is captured automatically, then the profile is added.</span><br>
-      <button class="teal" onclick="browserLoginNew()">Login via Browser</button>
+      <b>No password, no copy-paste?</b> <span class="muted">Log in inside a real Chrome window — the session is captured automatically, then the profile is added. (Needs a screen + Chrome — your own computer.)</span><br>
+      <button class="teal" id="btnWindowLogin" onclick="browserLoginNew()">Login via Browser</button>
       <button class="ghost" onclick="browserCancel()">Cancel</button>
+      <div class="muted" id="chromeNote"></div>
       <div id="browserMsg" class="msg"></div>
     </div>
-    <div id="browserHeadlessBlock" style="display:none">
-      <b>Server login</b> <span class="muted">this server has no screen — enter Naukri creds once (never stored). A headless browser logs in, captures the session, then the profile is added.</span>
+    <div id="browserHeadlessBlock">
+      <b>Server login</b> <span class="muted">works everywhere incl. Render — enter Naukri creds once (never stored). A headless browser logs in, captures the session, then the profile is added.</span>
       <div class="row">
         <div><label>Naukri email</label><input id="bhEmail" type="email" placeholder="you@example.com"></div>
         <div><label>Password (one-time use)</label><input id="bhPass" type="password" placeholder="••••••"></div>
@@ -489,11 +486,12 @@ async function refresh(){
         + '<div class="muted">'+esc(p.email)+'</div>'
         + '<div><span class="pill slate">Title '+(p.titleIndex+1)+' of '+p.titlesTotal+'</span> '
         + '<span class="pill slate">'+(p.authMethod==="cookies"?"cookies":"email+pass")+'</span> '
+        + '<span class="pill '+(p.hasSession?"green":"slate")+'">'+(p.hasSession?"session saved":"no session")+'</span> '
         + '<span class="pill slate">'+(p.tasks.title&&p.tasks.resume?"title+resume":p.tasks.title?"title only":"resume only")+'</span> '
         + '<span class="pill indigo">'+esc(p.scheduleText||"Every ?h")+'</span> '
         + '<span class="pill slate">'+esc(nt)+'</span></div>'
         + '<div class="prog"><div style="width:'+pct+'%"></div></div>'
-        + '<div class="timing">Last: '+esc(last)+' &nbsp;|&nbsp; Next: <span data-next="'+esc(p.nextRun||"")+'" data-running="'+(p.running?1:0)+'">-</span>'+(p.nextKind==="retry"?' <span class="pill amber">retry</span>':"")+'</div>'
+        + '<div class="timing">Last: '+esc(last)+' &nbsp;|&nbsp; Next: <span data-next="'+esc(p.nextRun||"")+'" data-running="'+(p.running?1:0)+'">-</span>'+(p.nextKind==="retry"?' <span class="pill amber">retry</span>':"")+' <span class="muted">('+esc(p.nextRun?new Date(p.nextRun).toLocaleString():"—")+')</span></div>'
         + '<div><span onclick="event.preventDefault();runNow(\''+p.id+'\')"><button>Update now for '+esc(p.name)+'</button></span> '
         + '<span onclick="event.preventDefault();clearLogs(\''+p.id+'\')"><button class="ghost">Clear logs</button></span></div>'
         + '</summary>'
@@ -536,12 +534,14 @@ async function refresh(){
         + '<div><label>Email</label><input id="ae-'+p.id+'" type="email"></div>'
         + '<div><label>Password</label><input id="aw-'+p.id+'" type="password"></div></div></div>'
         + '<div id="ac-'+p.id+'" style="display:'+(p.authMethod==="cookies"?"block":"none")+'">'
-        + '<div class="muted">Fastest: already logged in? <a href="#" onclick="location.href=BMLET;return false;">capture from this browser</a> while on naukri.com, then paste here.</div>'
+        + '<div class="muted">Tip: <b>Login via Browser</b> below opens Edge/Chrome for one-click capture.</div>'
         + '<label>Paste cookies (nauk_at=...; nauk_sid=...; nauk_rt=...)</label>'
         + '<textarea id="at-'+p.id+'" class="mono" style="min-height:60px"></textarea>'
         + '<div class="row"><div><label>nauk_at</label><input id="ak1-'+p.id+'" type="text"></div>'
         + '<div><label>nauk_sid</label><input id="ak2-'+p.id+'" type="text"></div>'
         + '<div><label>nauk_rt</label><input id="ak3-'+p.id+'" type="text"></div></div></div>'
+        + '<div id="ao-'+p.id+'" style="display:none"><label>Enter the code Naukri sent</label><div class="row"><div><input id="av-'+p.id+'" type="text" inputmode="numeric" placeholder="6-digit code"></div>'
+        + '<div><label>&nbsp;</label><button class="teal" onclick="verifyCardOtp(\''+p.id+'\')">Verify code</button></div></div></div>'
         + '<button class="ghost" onclick="saveAuth(\''+p.id+'\')">Save login</button> '
         + '<button class="teal" onclick="browserLoginRefresh(\''+p.id+'\')">Login via Browser</button></details><br>'
         + '<button class="ghost" onclick="clearCookies(\''+p.id+'\')">Clear cookies</button>'
@@ -680,9 +680,27 @@ async function clearCookies(id){
 }
 async function testLogin(id){
   const m = document.getElementById("m-"+id); m.textContent="Testing login with Naukri…";
+  document.getElementById("ao-"+id).style.display = "none";
   try{
     const j = await api("POST","/api/profiles/"+id+"/test-login",{});
-    m.textContent="Login works ("+j.method+", Naukri profile "+j.profileId+"). Nothing was changed.";
+    if(j.needOtp){
+      document.getElementById("ao-"+id).style.display = "block";
+      m.textContent = j.message || "Verification code needed — enter it below.";
+      return;
+    }
+    m.textContent="Login works ("+j.method+", Naukri profile "+j.profileId+"). Session saved — future updates skip login."; lastSig=""; refresh();
+  }catch(e){ m.textContent="Error: "+e.message; }
+}
+async function verifyCardOtp(id){
+  const m = document.getElementById("m-"+id);
+  const code = document.getElementById("av-"+id).value.trim();
+  if(!code){ m.textContent="Enter the code first."; return; }
+  m.textContent="Verifying code…";
+  try{
+    await api("POST","/api/profiles/"+id+"/verify-otp",{otp:code});
+    document.getElementById("av-"+id).value = "";
+    document.getElementById("ao-"+id).style.display = "none";
+    m.textContent="Code accepted — session saved. Future updates reuse it (no more codes)."; lastSig=""; refresh();
   }catch(e){ m.textContent="Error: "+e.message; }
 }
 async function saveAuth(id){
@@ -811,11 +829,14 @@ async function browserHeadlessOtp(){
 async function adaptBrowserUI(){
   try{
     const s = await api("GET","/api/browser/status");
-    const headed = !s.browser || s.browser.headed !== false;
-    const w = document.getElementById("browserWindowBlock");
-    const h = document.getElementById("browserHeadlessBlock");
-    if(w) w.style.display = headed ? "block" : "none";
-    if(h) h.style.display = headed ? "none" : "block";
+    const b = s.browser || {};
+    const headed = b.headed !== false;
+    const btn = document.getElementById("btnWindowLogin");
+    const note = document.getElementById("chromeNote");
+    if(btn) btn.disabled = !headed;
+    if(note) note.textContent = headed
+      ? "System Chrome detected on this server — window login available."
+      : "No Chrome/display on this server — window login unavailable, use Server login below.";
   }catch(e){}
 }
 function toggleTestCreds() {

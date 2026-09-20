@@ -273,7 +273,8 @@ async function naukriVerifyOtp(username, otp, via, flowId) {
   storeCookies(jar, getSetCookies(res));
   const bearer = jar.get("nauk_at") || data.authToken || data.token || "";
   if (!bearer) throw new Error("Code accepted but Naukri returned no session — try logging in again");
-  return fetchProfileId({ jar }, bearer);
+  const profileId = await fetchProfileId({ jar }, bearer);
+  return { profileId, jar, bearer };
 }
 
 // Login attempt that distinguishes: ok | 2-step OTP needed | plain error.
@@ -303,7 +304,7 @@ async function testCredsLogin(email, password) {
   const token = ctx.jar.get("nauk_at");
   if (res.ok && token) {
     const pid = await fetchProfileId(ctx, token);
-    return { status: "ok", profileId: pid };
+    return { status: "ok", profileId: pid, jar: ctx.jar, bearer: token };
   }
   // 2-step / MFA challenge? Pass the server's own flowId + medium back to the UI.
   let data = {};
@@ -478,6 +479,53 @@ async function verifyCookiesAuth(auth) {
   return fetchProfileId({ jar }, bearer);
 }
 
+// Persist a working login so later runs skip the login POST (no MFA/OTP repeats).
+function saveSession(p, jar, bearer) {
+  const sealed = {};
+  for (const [k, v] of jar.entries()) {
+    if (v) sealed[k] = encryptSecret(v, WEB_PASSWORD);
+  }
+  p.session = {
+    bearer: bearer ? encryptSecret(bearer, WEB_PASSWORD) : "",
+    savedAt: new Date().toISOString(),
+    cookies: {
+      nauk_at: sealed.nauk_at || "",
+      nauk_sid: sealed.nauk_sid || "",
+      nauk_rt: sealed.nauk_rt || "",
+    },
+  };
+  for (const [k, v] of Object.entries(sealed)) {
+    if (!(k in p.session.cookies)) p.session.cookies[k] = v;
+  }
+  profiles.saveRegistry(reg);
+}
+
+// Open a saved session back to plaintext (empty stays empty, never throws).
+function openSession(p) {
+  const out = { bearer: "", cookies: {} };
+  try {
+    if (p.session && p.session.bearer) out.bearer = safeDecrypt(p.session.bearer) || "";
+    const c = (p.session && p.session.cookies) || {};
+    for (const [k, v] of Object.entries(c)) out.cookies[k] = v ? safeDecrypt(v) : "";
+  } catch {
+    // corrupted session -> treated as missing
+  }
+  return out;
+}
+
+// Try the saved session first (cheap dashboard probe, no login POST).
+// Returns { bearer, jar, profileId } or throws.
+async function trySavedSession(p) {
+  const s = openSession(p);
+  if (!s.bearer) throw new Error("no saved session");
+  const jar = createJar();
+  for (const [k, v] of Object.entries(s.cookies)) {
+    if (v) jar.set(k, v);
+  }
+  const pid = await fetchProfileId({ jar }, s.bearer); // probe: throws if dead
+  return { bearer: s.bearer, jar, profileId: pid };
+}
+
 // ---------- registry + runtime ----------
 const reg = profiles.loadRegistry();
 migrateSecrets();
@@ -518,21 +566,34 @@ async function runProfile(p) {
     if (resumeExists) log(`[${p.name}] Resume will upload as: ${datedResumeName(prefix)}`);
 
     const ctx = { jar: createJar(), email: secretEmail(p), password: secretPass(p) };
-    let bearer;
-    if (p.auth.method === "cookies") {
-      const ck = openCookies(p.auth);
-      for (const [k, v] of Object.entries(ck)) {
-        if (v) ctx.jar.set(k, v);
-      }
-      bearer = ck.nauk_at || "";
-      if (!bearer) throw new Error("Saved cookies are missing nauk_at — refresh login on the card");
-      log(`[${p.name}] using saved session cookies (email login skipped)`);
-    } else {
-      if (!ctx.email || !ctx.password) throw new Error("Missing login email/password — refresh login on the card");
-      bearer = await naukriLogin(ctx);
-      log(`[${p.name}] Login OK`);
+    let bearer = null;
+    let profileId = null;
+    try {
+      const s = await trySavedSession(p);
+      bearer = s.bearer;
+      ctx.jar = s.jar;
+      profileId = s.profileId;
+      log(`[${p.name}] reusing saved session (login skipped)`);
+    } catch (e) {
+      log(`[${p.name}] no live session (${e.message}) — authenticating fresh`);
     }
-    const profileId = await fetchProfileId(ctx, bearer);
+    if (!bearer) {
+      if (p.auth.method === "cookies") {
+        const ck = openCookies(p.auth);
+        for (const [k, v] of Object.entries(ck)) {
+          if (v) ctx.jar.set(k, v);
+        }
+        bearer = ck.nauk_at || "";
+        if (!bearer) throw new Error("Saved cookies are missing nauk_at — refresh login on the card");
+        log(`[${p.name}] using saved login cookies`);
+      } else {
+        if (!ctx.email || !ctx.password) throw new Error("Missing login email/password — refresh login on the card");
+        bearer = await naukriLogin(ctx);
+        log(`[${p.name}] Login OK`);
+      }
+      profileId = await fetchProfileId(ctx, bearer);
+      saveSession(p, ctx.jar, bearer); // remember it so next runs skip login
+    }
 
     let headlineErr = null;
     let resumeErr = null;
@@ -934,6 +995,7 @@ function publicProfile(p) {
     email: p.auth.method === "password" ? profiles.maskEmail(safeDecrypt(p.auth.email)) : "cookie login",
     authMethod: p.auth.method,
     cookiesSet: p.auth.method === "cookies" ? Object.keys(p.auth.cookies || {}).filter((k) => p.auth.cookies[k]) : [],
+    hasSession: !!(p.session && (p.session.bearer || (p.session.cookies && p.session.cookies.nauk_at))),
     titlesTotal: titles.length,
     resumePresent: fs.existsSync(profiles.resumePath(p)),
     tasks: p.tasks,
@@ -1199,19 +1261,57 @@ const server = http.createServer(async (req, res) => {
       try {
         if (p.auth.method === "cookies") {
           const pid = await verifyCookiesAuth({ method: "cookies", cookies: openCookies(p.auth) });
+          const jar = createJar();
+          const ck = openCookies(p.auth);
+          for (const [k, v] of Object.entries(ck)) {
+            if (v) jar.set(k, v);
+          }
+          saveSession(p, jar, ck.nauk_at);
           sendJson(res, 200, { ok: true, method: "cookies", profileId: pid });
         } else {
-          const email = decryptSecret(p.auth.email, WEB_PASSWORD);
-          const password = decryptSecret(p.auth.password, WEB_PASSWORD);
+          const email = secretEmail(p);
+          const password = secretPass(p);
           if (!email || !password) throw new Error("No email/password saved");
-          const ctx = { jar: createJar(), email, password };
-          const bearer = await naukriLogin(ctx);
-          const pid = await fetchProfileId(ctx, bearer);
-          sendJson(res, 200, { ok: true, method: "password", profileId: pid });
+          const r = await testCredsLogin(email, password);
+          if (r.status === "otp") {
+            const where = r.maskedEmail ? ` (code goes to ${r.medium || "your"} ${r.maskedEmail})` : "";
+            sendJson(res, 200, {
+              ok: false,
+              needOtp: true,
+              mfa: !!r.mfa,
+              flowId: r.flowId || "",
+              medium: r.medium || "",
+              message: "This account needs a verification code" + where + " — enter it below.",
+            });
+            return;
+          }
+          saveSession(p, r.jar, r.bearer);
+          sendJson(res, 200, { ok: true, method: "password", profileId: r.profileId });
         }
         log(`[${p.name}] test login OK`);
       } catch (e) {
         sendJson(res, 400, { ok: false, error: "Login test failed: " + e.message });
+      }
+      return;
+    }
+
+    // POST /api/profiles/:id/verify-otp — complete MFA code, saves session so runs skip login
+    if (parts[1] === "profiles" && parts[2] && parts[3] === "verify-otp" && req.method === "POST") {
+      const p = profiles.getProfile(reg, parts[2]);
+      if (!p) {
+        sendJson(res, 404, { ok: false, error: "Profile not found" });
+        return;
+      }
+      try {
+        if (p.auth.method !== "password") throw new Error("Only email+password profiles use codes");
+        const email = secretEmail(p);
+        if (!email || !body.otp) throw new Error("Email missing or code empty");
+        const vr = await naukriVerifyOtp(email, body.otp, body.via === "email" ? "email" : "mobile", body.flowId);
+        saveSession(p, vr.jar, vr.bearer);
+        log(`[${p.name}] OTP verified — session saved, future runs skip login`);
+        sendJson(res, 200, { ok: true, profileId: vr.profileId, message: "Code accepted — logged in. Future updates reuse this session." });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
       }
       return;
     }
@@ -1269,8 +1369,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       try {
-        const pid = await naukriVerifyOtp(body.email, body.otp, body.via === "email" ? "email" : "mobile", body.flowId);
-        sendJson(res, 200, { ok: true, profileId: pid, message: "Able to login" });
+        const vr = await naukriVerifyOtp(body.email, body.otp, body.via === "email" ? "email" : "mobile", body.flowId);
+        sendJson(res, 200, { ok: true, profileId: vr.profileId, message: "Able to login" });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e.message });
       }
@@ -1286,11 +1386,12 @@ const server = http.createServer(async (req, res) => {
           fs.rmSync(browserDir, { recursive: true, force: true });
           cleared.push("browser-profile/");
         }
-        // Also clear any profile's saved cookies
+        // Also clear any profile's saved cookies + login sessions
         for (const p of reg.profiles) {
           if (p.auth.method === "cookies") {
             p.auth.cookies = { nauk_at: "", nauk_sid: "", nauk_rt: "" };
           }
+          p.session = { bearer: "", savedAt: null, cookies: { nauk_at: "", nauk_sid: "", nauk_rt: "" } };
         }
         profiles.saveRegistry(reg);
         sendJson(res, 200, { ok: true, cleared });

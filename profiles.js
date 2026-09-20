@@ -52,6 +52,7 @@ function loadRegistry() {
           notify: normalizeNotify(p.notify),
           tasks: normalizeTasks(p.tasks),
           schedule: normalizeSchedule(p.schedule),
+          session: normalizeSession(p.session),
           titleIndex: Number.isInteger(p.titleIndex) && p.titleIndex >= 0 ? p.titleIndex : 0,
           lastRun: typeof p.lastRun === "string" ? p.lastRun : null,
           lastStatus: typeof p.lastStatus === "string" ? p.lastStatus : "never run",
@@ -158,6 +159,20 @@ function normalizeTasks(t) {
   const resume = !t || t.resume === undefined ? true : !!t.resume;
   if (!title && !resume) throw new Error("Select at least one update task: Title and/or Resume");
   return { title, resume };
+}
+
+// Saved login session (sealed cookies + bearer). Reused until it stops working.
+function normalizeSession(s) {
+  const c = (s && s.cookies) || {};
+  return {
+    bearer: typeof s?.bearer === "string" ? s.bearer : "",
+    savedAt: typeof s?.savedAt === "string" ? s.savedAt : null,
+    cookies: {
+      nauk_at: String(c.nauk_at || ""),
+      nauk_sid: String(c.nauk_sid || ""),
+      nauk_rt: String(c.nauk_rt || ""),
+    },
+  };
 }
 
 function validateAuth(auth) {
@@ -274,6 +289,7 @@ function addProfile(reg, { name, auth, tasks, schedule, titlesText, titlesOrigNa
     notify: validateNotify(notify),
     tasks: finalTasks,
     schedule: finalSchedule,
+    session: normalizeSession(null), // filled after the first successful login
     titleIndex: 0,
     lastRun: null,
     lastStatus: "never run",
@@ -326,14 +342,15 @@ function updateSchedule(reg, id, schedule) {
   return p;
 }
 
-// Wipe a profile's saved session cookies (re-link via browser/paste after).
+// Wipe a profile's saved session cookies + login session (re-link after).
 function clearCookies(reg, id) {
   const p = getProfile(reg, id);
   if (!p) throw new Error("Profile not found");
   if (p.auth.method === "cookies") {
     p.auth.cookies = { nauk_at: "", nauk_sid: "", nauk_rt: "" };
-    saveRegistry(reg);
   }
+  p.session = normalizeSession(null);
+  saveRegistry(reg);
   return p;
 }
 

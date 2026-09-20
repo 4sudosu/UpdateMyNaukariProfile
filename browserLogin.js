@@ -35,6 +35,9 @@ function findChrome() {
   if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) return process.env.CHROME_PATH;
   const localApp = process.env.LOCALAPPDATA || "";
   const candidates = [
+    localApp ? path.join(localApp, "Microsoft\\Edge\\Application\\msedge.exe") : "",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
     localApp ? path.join(localApp, "Google\\Chrome\\Application\\chrome.exe") : "",
@@ -349,10 +352,11 @@ async function submitOtp(code) {
 }
 
 function getBrowserStatus() {
-  if (!active) return { active: false, headed: headedCapable(), mode: null };
+  if (!active) return { active: false, headed: headedCapable(), chrome: !!findChrome(), mode: null };
   return {
     active: true,
     headed: headedCapable(),
+    chrome: !!findChrome(),
     mode: active.mode || "window",
     profileId: active.profileId,
     profileName: active.profileName,
