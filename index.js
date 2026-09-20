@@ -680,6 +680,12 @@ function nextWindow(fromStr, toStr, lastRunMs, now) {
   }
   return now; // window missed -> once now
 }
+// Hours for interval mode: the profile's own value, else the global default.
+function resolveHours(p) {
+  const h = p.schedule && p.schedule.hours;
+  if (Number.isFinite(h)) return Math.min(720, Math.max(0.5, h));
+  return settings.intervalHours || 18;
+}
 // Absolute timestamp of the next run for a profile.
 function planNext(p, now) {
   now = now || Date.now();
@@ -696,7 +702,7 @@ function planNext(p, now) {
     return nextWindow(p.schedule.from, p.schedule.to, Number.isFinite(last) ? last : 0, now);
   }
   if (!Number.isFinite(last)) return now;
-  const due = last + intervalMs();
+  const due = last + resolveHours(p) * 3600000;
   return due <= now ? now : due;
 }
 
@@ -866,7 +872,7 @@ function scheduleText(p) {
   const s = p.schedule || { mode: "interval" };
   if (s.mode === "daily") return `Daily ${s.time}`;
   if (s.mode === "window") return `${s.from}–${s.to} daily`;
-  return `Every ${settings.intervalHours}h`;
+  return `Every ${resolveHours(p)}h`;
 }
 
 // Public profile view for the dashboard (passwords never leave the server).
@@ -1377,7 +1383,7 @@ server.listen(PORT, () => {
   log(`Server listening on port ${PORT}`);
   if (WEB_PASSWORD) log("Dashboard at / requires panel login (12h session token)");
   else log("WARNING: WEB_PASSWORD is empty — NOBODY can log in until you set it in .env and restart");
-  log(`Interval: every ${settings.intervalHours}h per profile (counted from each last update, change in dashboard Settings)`);
+  log(`Default rhythm Every ${settings.intervalHours}h — each profile sets its own schedule on its card`);
   wa.configure({ enabled: settings.whatsapp.enabled });
   // Optional: never auto-links on startup. Only a PREVIOUS link reconnects
   // silently (no QR needed). Fresh linking happens from the dashboard.

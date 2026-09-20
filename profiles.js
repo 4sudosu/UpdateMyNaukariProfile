@@ -66,7 +66,10 @@ function loadRegistry() {
 
 function saveRegistry(reg) {
   ensureDir();
-  fs.writeFileSync(REGISTRY_FILE, JSON.stringify(reg, null, 2), "utf8");
+  // Atomic write (temp + rename) so a killed process can never leave torn JSON.
+  const tmp = REGISTRY_FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(reg, null, 2), "utf8");
+  fs.renameSync(tmp, REGISTRY_FILE);
 }
 
 function getProfile(reg, id) {
@@ -144,7 +147,9 @@ function normalizeSchedule(s) {
     if (f.mins >= t.mins) throw new Error("Window start must be before end (same day)");
     return { mode, from: s.from.trim(), to: s.to.trim(), time: "" };
   }
-  return { mode: "interval", time: "", from: "", to: "" };
+  const hrs = !s || s.hours === undefined || s.hours === "" ? 18 : parseFloat(s.hours);
+  if (!Number.isFinite(hrs) || hrs < 0.5 || hrs > 720) throw new Error("Hours must be a number between 0.5 and 720");
+  return { mode: "interval", hours: hrs, time: "", from: "", to: "" };
 }
 
 // Which updates a profile wants each cycle: Title and/or Resume (at least one).

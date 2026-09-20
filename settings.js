@@ -44,7 +44,10 @@ function loadSettings() {
 }
 
 function saveSettings(s) {
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(s, null, 2), "utf8");
+  // Atomic write (temp + rename) so a killed process can never leave torn JSON.
+  const tmp = SETTINGS_FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(s, null, 2), "utf8");
+  fs.renameSync(tmp, SETTINGS_FILE);
 }
 
 module.exports = { loadSettings, saveSettings, clampInterval, THEME_IDS };

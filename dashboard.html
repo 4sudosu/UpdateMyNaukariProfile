@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Naukri Dashboard</title>
+<link rel="icon" type="image/x-icon" href="https://www.naukri.com/favicon.ico">
 <style>
   :root{
     --primary:#4f46e5; --primary2:#8b5cf6; --ink:#1e1b4b; --muted:#64748b;
@@ -199,11 +200,12 @@
   <label>Schedule <span class="muted">(server time — see clock above)</span></label>
   <div class="row">
     <div><label>Mode</label><select id="fSched" onchange="toggleScheduleTargets('f')">
-      <option value="interval">Every X hours (from Settings)</option>
+      <option value="interval">Every… hours</option>
       <option value="daily">Every day at…</option>
       <option value="window">Random between…</option>
     </select></div>
-    <div id="fTimeWrap" style="display:none"><label>Time (HH:MM, 24h)</label><input id="fTime" type="text" placeholder="09:00"></div>
+    <div id="fHoursWrap"><label>Every (hours)</label><input id="fHours" type="number" min="0.5" max="720" step="0.5" value="18"></div>
+    <div id="fTimeWrap" style="display:none"><label>Time (HH:MM)</label><input id="fTime" type="text" placeholder="09:00"></div>
     <div id="fFromWrap" style="display:none"><label>From (HH:MM)</label><input id="fFrom" type="text" placeholder="08:00"></div>
     <div id="fToWrap" style="display:none"><label>To (HH:MM)</label><input id="fTo" type="text" placeholder="09:00"></div>
   </div>
@@ -238,10 +240,7 @@
 
   <details class="sect"><summary><span>Settings</span> <span class="pill slate" id="waPill">…</span></summary>
   <div class="card">
-    <div class="row">
-      <div><label>Update every (hours, per profile, from its last update)</label><input id="setInterval" type="number" min="0.5" max="720" step="0.5"></div>
-      <div><label>&nbsp;</label><button onclick="saveSettings()">Save settings</button></div>
-    </div>
+    <div class="muted">Update rhythm is set per profile (every X hours, daily time, or random window) — see each profile card.</div>
     <label>Theme — 10 combinations, light &amp; dark (applies instantly)</label>
     <div class="swatches" id="themeSwatches"></div>
     <div id="setMsg" class="msg"></div>
@@ -380,10 +379,11 @@ function readSchedule(prefix){
   const mode = document.getElementById(prefix+"Sched").value;
   if(mode === "daily") return { mode, time: document.getElementById(prefix+"Time").value.trim() };
   if(mode === "window") return { mode, from: document.getElementById(prefix+"From").value.trim(), to: document.getElementById(prefix+"To").value.trim() };
-  return { mode: "interval" };
+  return { mode: "interval", hours: parseFloat(document.getElementById(prefix+"Hours").value) };
 }
 function toggleScheduleTargets(prefix){
   const t = document.getElementById(prefix+"Sched").value;
+  document.getElementById(prefix+"HoursWrap").style.display = t==="interval" ? "block" : "none";
   document.getElementById(prefix+"TimeWrap").style.display = t==="daily" ? "block" : "none";
   document.getElementById(prefix+"FromWrap").style.display = t==="window" ? "block" : "none";
   document.getElementById(prefix+"ToWrap").style.display = t==="window" ? "block" : "none";
@@ -420,8 +420,6 @@ async function refresh(){
   try{
     const j = await api("GET","/api/status");
     if(document.getElementById("app").style.display === "none") hideLogin();
-    const iv = document.getElementById("setInterval");
-    if(!iv.dataset.init && j.settings){ iv.value = j.settings.intervalHours; iv.dataset.init = "1"; }
     if(j.settings && j.settings.theme && j.settings.theme !== appliedTheme) applyTheme(j.settings.theme, false);
     const wa = j.wa || {};
     const acc = (j.settings && j.settings.whatsapp) || {};
@@ -487,10 +485,11 @@ async function refresh(){
         + '<div><label><input id="r-'+p.id+'" type="checkbox"'+(p.tasks.resume?" checked":"")+' style="width:auto"> Update Resume</label></div>'
         + '<div><label>&nbsp;</label><button class="ghost" onclick="saveTasks(\''+p.id+'\')">Save tasks</button></div></div>'
         + '<div class="row"><div><label>Schedule (server time)</label><select id="s-'+p.id+'" onchange="toggleScheduleTargetsCard(\''+p.id+'\')">'
-        + '<option value="interval"'+(p.schedule.mode==="interval"?" selected":"")+'>Every X hours</option>'
+        + '<option value="interval"'+(p.schedule.mode==="interval"?" selected":"")+'>Every… hours</option>'
         + '<option value="daily"'+(p.schedule.mode==="daily"?" selected":"")+'>Every day at…</option>'
         + '<option value="window"'+(p.schedule.mode==="window"?" selected":"")+'>Random between…</option>'
         + '</select></div>'
+        + '<div id="sh-'+p.id+'" style="display:'+(p.schedule.mode==="interval"?"block":"none")+'"><label>Every (hours)</label><input id="sv2-'+p.id+'" type="number" min="0.5" max="720" step="0.5" value="'+esc(p.schedule.hours||18)+'"></div>'
         + '<div id="st-'+p.id+'" style="display:'+(p.schedule.mode==="daily"?"block":"none")+'"><label>Time (HH:MM)</label><input id="sv-'+p.id+'" type="text" value="'+esc(p.schedule.time||"")+'"></div>'
         + '<div id="sf-'+p.id+'" style="display:'+(p.schedule.mode==="window"?"block":"none")+'"><label>From</label><input id="sw-'+p.id+'" type="text" value="'+esc(p.schedule.from||"")+'"></div>'
         + '<div id="sx-'+p.id+'" style="display:'+(p.schedule.mode==="window"?"block":"none")+'"><label>To</label><input id="sy-'+p.id+'" type="text" value="'+esc(p.schedule.to||"")+'"></div>'
@@ -618,13 +617,14 @@ async function saveSchedule(id){
     const mode = document.getElementById("s-"+id).value;
     const sch = mode==="daily" ? {mode, time:document.getElementById("sv-"+id).value.trim()}
       : mode==="window" ? {mode, from:document.getElementById("sw-"+id).value.trim(), to:document.getElementById("sy-"+id).value.trim()}
-      : {mode:"interval"};
+      : {mode:"interval", hours:parseFloat(document.getElementById("sv2-"+id).value)};
     await api("PUT","/api/profiles/"+id+"/schedule",{schedule:sch});
     m.textContent="Schedule saved."; lastSig=""; refresh();
   }catch(e){ m.textContent="Error: "+e.message; }
 }
 function toggleScheduleTargetsCard(id){
   const t = document.getElementById("s-"+id).value;
+  document.getElementById("sh-"+id).style.display = t==="interval"?"block":"none";
   document.getElementById("st-"+id).style.display = t==="daily"?"block":"none";
   document.getElementById("sf-"+id).style.display = t==="window"?"block":"none";
   document.getElementById("sx-"+id).style.display = t==="window"?"block":"none";
@@ -665,13 +665,6 @@ async function saveAuth(id){
     await api("PUT","/api/profiles/"+id+"/auth",{auth});
     m.textContent="Login updated (cookies verified live)."; lastSig=""; refresh();
   }catch(e){ m.textContent="Error: "+e.message; }
-}
-async function saveSettings(){
-  const m = document.getElementById("setMsg"); m.className="msg"; m.textContent="Saving…";
-  try{
-    const j = await api("PUT","/api/settings",{ intervalHours:parseFloat(document.getElementById("setInterval").value) });
-    m.className="msg ok"; m.textContent="Interval saved: every "+j.intervalHours+"h. All profiles re-anchored.";
-  }catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
 }
 async function saveWaSettings(){
   const m = document.getElementById("waMsg"); m.className="msg"; m.textContent="Saving…";
