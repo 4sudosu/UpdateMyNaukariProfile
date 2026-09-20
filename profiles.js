@@ -1,0 +1,346 @@
+/**
+ * Multi-profile registry.
+ *
+ * Each Naukri profile gets its OWN files (never mixed):
+ *   profiles/<SafeName>_Titles.txt   - one headline per line
+ *   profiles/<SafeName>_Resume.pdf    - base resume uploaded each cycle
+ *   profiles/profiles.json            - credentials, notify settings, progress
+ */
+
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+
+const PROFILES_DIR = path.join(__dirname, "profiles");
+const REGISTRY_FILE = path.join(PROFILES_DIR, "profiles.json");
+
+function ensureDir() {
+  if (!fs.existsSync(PROFILES_DIR)) fs.mkdirSync(PROFILES_DIR, { recursive: true });
+}
+
+// Filename-safe candidate name: letters, digits, dash, underscore only.
+function safeName(name) {
+  return (name || "").trim().replace(/[^a-zA-Z0-9-_]/g, "");
+}
+
+function titlesPath(profile) {
+  return path.join(PROFILES_DIR, `${profile.safe}_Titles.txt`);
+}
+function resumePath(profile) {
+  return path.join(PROFILES_DIR, `${profile.safe}_Resume.pdf`);
+}
+
+function blankRegistry() {
+  return { profiles: [] };
+}
+
+function loadRegistry() {
+  ensureDir();
+  try {
+    const raw = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8"));
+    const list = Array.isArray(raw.profiles) ? raw.profiles : [];
+    return {
+      profiles: list
+        .filter((p) => p && p.id && p.name)
+        .map((p) => ({
+          id: String(p.id),
+          name: String(p.name),
+          safe: safeName(p.safe || p.name) || "Profile",
+          auth: p.auth
+            ? normalizeAuth(p.auth)
+            : normalizeAuth({ method: "password", email: p.email, password: p.password }),
+          notify: normalizeNotify(p.notify),
+          tasks: normalizeTasks(p.tasks),
+          titleIndex: Number.isInteger(p.titleIndex) && p.titleIndex >= 0 ? p.titleIndex : 0,
+          lastRun: typeof p.lastRun === "string" ? p.lastRun : null,
+          lastStatus: typeof p.lastStatus === "string" ? p.lastStatus : "never run",
+          lastResume: typeof p.lastResume === "string" ? p.lastResume : "never run",
+          lastHeadline: typeof p.lastHeadline === "string" ? p.lastHeadline : "",
+        })),
+    };
+  } catch {
+    return blankRegistry();
+  }
+}
+
+function saveRegistry(reg) {
+  ensureDir();
+  fs.writeFileSync(REGISTRY_FILE, JSON.stringify(reg, null, 2), "utf8");
+}
+
+function getProfile(reg, id) {
+  return reg.profiles.find((p) => p.id === id) || null;
+}
+
+function normalizeNotify(n) {
+  const type = n && (n.type === "group" || n.type === "personal") ? n.type : "off";
+  return {
+    type,
+    group: n && typeof n.group === "string" ? n.group.trim() : "",
+    phone: n && typeof n.phone === "string" ? n.phone.trim() : "",
+    customMsg: n && typeof n.customMsg === "string" ? n.customMsg.trim().slice(0, 500) : "",
+  };
+}
+
+function validEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "");
+}
+
+// Parse a pasted cookie line:  nauk_at=AAA; nauk_sid=BBB; nauk_rt=CCC
+function parseCookieText(text) {
+  const out = {};
+  for (const part of (text || "").split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    const k = part.slice(0, eq).trim();
+    const v = part.slice(eq + 1).trim();
+    if (k && v) out[k] = v;
+  }
+  return out;
+}
+
+// Normalize any auth input into { method, email, password, cookies }.
+function normalizeAuth(input) {
+  const src = input || {};
+  if (src.method === "cookies") {
+    const merged = Object.assign(parseCookieText(src.cookieText), src.cookies || {});
+    return {
+      method: "cookies",
+      email: "",
+      password: "",
+      cookies: {
+        nauk_at: String(merged.nauk_at || "").trim(),
+        nauk_sid: String(merged.nauk_sid || "").trim(),
+        nauk_rt: String(merged.nauk_rt || "").trim(),
+      },
+    };
+  }
+  return {
+    method: "password",
+    email: String(src.email || "").trim(),
+    password: String(src.password || ""),
+    cookies: { nauk_at: "", nauk_sid: "", nauk_rt: "" },
+  };
+}
+
+// Which updates a profile wants each cycle: Title and/or Resume (at least one).
+function normalizeTasks(t) {
+  const title = !t || t.title === undefined ? true : !!t.title;
+  const resume = !t || t.resume === undefined ? true : !!t.resume;
+  if (!title && !resume) throw new Error("Select at least one update task: Title and/or Resume");
+  return { title, resume };
+}
+
+function validateAuth(auth) {
+  if (auth.method === "cookies") {
+    if (!auth.cookies.nauk_at) {
+      throw new Error("nauk_at cookie is required — paste your session cookies (see steps in the dashboard)");
+    }
+    return auth;
+  }
+  if (!validEmail(auth.email)) throw new Error("Valid login email is required");
+  if (!auth.password) throw new Error("Login password is required");
+  return auth;
+}
+
+// Build + validate auth without saving (used by add + refresh-login).
+function buildAuth(authInput) {
+  return validateAuth(normalizeAuth(authInput));
+}
+
+function setAuth(reg, id, auth) {
+  const p = getProfile(reg, id);
+  if (!p) throw new Error("Profile not found");
+  p.auth = auth;
+  saveRegistry(reg);
+  return p;
+}
+
+// Replace a saved profile's Titles.txt and/or Resume.pdf (same strict rules as add).
+// New titles restart the rotation from #1.
+function updateFiles(reg, id, { titlesText, titlesOrigName, resumeBuffer, resumeOrigName }) {
+  const p = getProfile(reg, id);
+  if (!p) throw new Error("Profile not found");
+  const wantTitles = titlesText !== undefined && titlesText !== null;
+  const wantResume = !!(resumeBuffer && resumeBuffer.length);
+  if (!wantTitles && !wantResume) throw new Error("Nothing to update — choose a titles file/text and/or a resume PDF");
+
+  if (wantTitles) {
+    const titles = String(titlesText || "")
+      .split("\n")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    if (titles.length === 0) throw new Error("At least one title is required");
+    if (titlesOrigName && !/\.txt$/i.test(titlesOrigName)) {
+      throw new Error(`Titles file must be a .txt file (got "${titlesOrigName}")`);
+    }
+    fs.writeFileSync(titlesPath(p), titles.join("\n") + "\n", "utf8");
+    p.titleIndex = 0; // fresh list → restart rotation from #1
+  }
+
+  if (wantResume) {
+    if (!resumeOrigName || !/\.pdf$/i.test(resumeOrigName)) {
+      throw new Error(`Resume must be a .pdf file (got "${resumeOrigName || "no file"}")`);
+    }
+    if (!isPdfBuffer(resumeBuffer)) throw new Error("Resume file is not a valid PDF (must start with %PDF)");
+    fs.writeFileSync(resumePath(p), resumeBuffer);
+  }
+
+  saveRegistry(reg);
+  return p;
+}
+
+function phoneDigits(phone) {
+  return (phone || "").replace(/\D/g, "");
+}
+
+function validateNotify(notify) {
+  const n = normalizeNotify(notify);
+  if (n.type === "group" && !n.group) throw new Error("Group name is required for group notifications");
+  if (n.type === "personal") {
+    const d = phoneDigits(n.phone);
+    if (d.length < 7 || d.length > 15) throw new Error("Personal number must have 7–15 digits (include country code, e.g. 919876543210)");
+    n.phone = d;
+  }
+  return n;
+}
+
+function isPdfBuffer(buf) {
+  return buf && buf.length > 4 && buf.slice(0, 5).toString("ascii") === "%PDF-";
+}
+
+// Add a profile + write its two files. Throws with a friendly message.
+function addProfile(reg, { name, auth, tasks, titlesText, titlesOrigName, resumeBuffer, resumeOrigName, notify }) {
+  const cleanName = (name || "").trim();
+  if (!cleanName) throw new Error("Profile Name is required");
+  const safe = safeName(cleanName);
+  if (!safe) throw new Error("Profile Name must contain at least one letter/digit");
+  if (reg.profiles.some((p) => p.safe.toLowerCase() === safe.toLowerCase())) {
+    throw new Error(`A profile with file name "${safe}" already exists`);
+  }
+  const finalAuth = buildAuth(auth);
+  const finalTasks = normalizeTasks(tasks);
+
+  const titles = (titlesText || "")
+    .split("\n")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  if (titles.length === 0) throw new Error("At least one title is required (titles file or pasted text)");
+  if (titlesOrigName && !/\.txt$/i.test(titlesOrigName)) {
+    throw new Error(`Titles file must be a .txt file (got "${titlesOrigName}") — it will be saved as ${safe}_Titles.txt`);
+  }
+
+  if (!resumeBuffer || resumeBuffer.length === 0) throw new Error("Resume PDF is required");
+  if (!resumeOrigName || !/\.pdf$/i.test(resumeOrigName)) {
+    throw new Error(`Resume must be a .pdf file (got "${resumeOrigName || "no file"}") — it will be saved as ${safe}_Resume.pdf`);
+  }
+  if (!isPdfBuffer(resumeBuffer)) throw new Error("Resume file is not a valid PDF (must start with %PDF)");
+
+  const profile = {
+    id: crypto.randomBytes(8).toString("hex"),
+    name: cleanName,
+    safe,
+    auth: finalAuth, // { method: 'password'|'cookies', ... } — stored on YOUR server only
+    notify: validateNotify(notify),
+    tasks: finalTasks,
+    titleIndex: 0,
+    lastRun: null,
+    lastStatus: "never run",
+    lastResume: "never run",
+    lastHeadline: "",
+  };
+
+  ensureDir();
+  fs.writeFileSync(titlesPath(profile), titles.join("\n") + "\n", "utf8");
+  fs.writeFileSync(resumePath(profile), resumeBuffer);
+  reg.profiles.push(profile);
+  saveRegistry(reg);
+  return profile;
+}
+
+function deleteProfile(reg, id) {
+  const i = reg.profiles.findIndex((p) => p.id === id);
+  if (i === -1) throw new Error("Profile not found");
+  const [p] = reg.profiles.splice(i, 1);
+  for (const f of [titlesPath(p), resumePath(p)]) {
+    try {
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    } catch {
+      // ignore
+    }
+  }
+  saveRegistry(reg);
+  return p;
+}
+
+function updateNotify(reg, id, notify) {
+  const p = getProfile(reg, id);
+  if (!p) throw new Error("Profile not found");
+  p.notify = validateNotify(notify);
+  saveRegistry(reg);
+  return p;
+}
+
+function updateTasks(reg, id, tasks) {
+  const p = getProfile(reg, id);
+  if (!p) throw new Error("Profile not found");
+  p.tasks = normalizeTasks(tasks);
+  saveRegistry(reg);
+  return p;
+}
+
+// Wipe a profile's saved session cookies (re-link via browser/paste after).
+function clearCookies(reg, id) {
+  const p = getProfile(reg, id);
+  if (!p) throw new Error("Profile not found");
+  if (p.auth.method === "cookies") {
+    p.auth.cookies = { nauk_at: "", nauk_sid: "", nauk_rt: "" };
+    saveRegistry(reg);
+  }
+  return p;
+}
+
+function readProfileTitles(profile) {
+  try {
+    return fs
+      .readFileSync(titlesPath(profile), "utf8")
+      .split("\n")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+// Public view: never leaks passwords.
+function maskEmail(email) {
+  const [user, domain] = (email || "").split("@");
+  if (!domain) return "***";
+  return (user || "").slice(0, 2) + "***@" + domain;
+}
+function maskPhone(phone) {
+  const d = phoneDigits(phone);
+  return d ? "***" + d.slice(-4) : "";
+}
+
+module.exports = {
+  PROFILES_DIR,
+  loadRegistry,
+  saveRegistry,
+  getProfile,
+  addProfile,
+  deleteProfile,
+  updateNotify,
+  buildAuth,
+  setAuth,
+  updateFiles,
+  updateTasks,
+  clearCookies,
+  readProfileTitles,
+  titlesPath,
+  resumePath,
+  safeName,
+  phoneDigits,
+  maskEmail,
+  maskPhone,
+};

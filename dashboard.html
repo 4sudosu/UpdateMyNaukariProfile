@@ -1,0 +1,780 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Naukri Dashboard</title>
+<style>
+  :root{
+    --primary:#4f46e5; --primary2:#8b5cf6; --ink:#1e1b4b; --muted:#64748b;
+    --ok:#059669; --bad:#e11d48; --warn:#d97706;
+    --bg1:#e0e7ff; --bg2:#fae8ff; --bg3:#cffafe;
+    --card:#ffffff; --cardbrd:#ede9fe; --topbar:rgba(238,242,255,.75);
+    --inpbg:#f8fafc; --inpbrd:#cbd5e1; --inptext:#1e293b; --lbl:#475569;
+    --time:#312e81; --timenext:#6d28d9; --sectline:#c7d2fe;
+    --ghostbg:#eef2ff; --ghosttx:#3730a3; --prog:#eef2ff;
+  }
+  *{box-sizing:border-box}
+  body{font-family:"Segoe UI",system-ui,-apple-system,sans-serif;margin:0;color:var(--inptext);
+    background:linear-gradient(135deg,var(--bg1) 0%,var(--bg2) 48%,var(--bg3) 100%);min-height:100vh}
+  /* ---------- login overlay ---------- */
+  #loginOverlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;
+    background:linear-gradient(135deg,#1e1b4b 0%,#4c1d95 60%,#0e7490 100%);z-index:50}
+  .login-card{background:rgba(255,255,255,.12);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid rgba(255,255,255,.25);border-radius:20px;padding:36px 32px;width:360px;max-width:94vw;
+    text-align:center;color:#fff;box-shadow:0 25px 60px rgba(0,0,0,.35);animation:rise .45s ease}
+  .login-card h2{margin:12px 0 4px;font-size:22px}
+  .login-card p{color:#ddd6fe;font-size:13px;margin:0 0 16px}
+  .login-card input{width:100%;padding:12px 14px;font-size:16px;border-radius:10px;border:1px solid rgba(255,255,255,.4);
+    background:#ffffff;color:#111827;caret-color:#4f46e5;outline:none}
+  .login-card input::placeholder{color:#9ca3af}
+  .login-card button{width:100%;margin-top:12px;padding:12px;font-size:15px;font-weight:600;border:0;border-radius:10px;
+    cursor:pointer;color:#fff;background:linear-gradient(135deg,#6366f1,#a855f7)}
+  .login-card button:hover{filter:brightness(1.1)}
+  #loginMsg{min-height:20px;margin-top:10px;font-size:13px;color:#fecaca;white-space:pre-wrap}
+  .shake{animation:shake .4s}
+  @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+  @keyframes rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+  /* ---------- app ---------- */
+  #app{display:none;max-width:1020px;margin:0 auto;padding:0 16px 60px;animation:rise .4s ease}
+  .topbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:14px 4px;margin:0 -4px;background:var(--topbar);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+  .topbar h1{font-size:22px;margin:0;background:linear-gradient(135deg,var(--primary),var(--primary2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .topbar .spacer{flex:1}
+  #clock{font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px}
+  .pill{display:inline-block;border-radius:20px;padding:3px 12px;font-size:12px;font-weight:600}
+  .pill.indigo{background:#e0e7ff;color:#3730a3}
+  .pill.green{background:#d1fae5;color:#065f46}
+  .pill.rose{background:#ffe4e6;color:#9f1239}
+  .pill.amber{background:#fef3c7;color:#92400e}
+  .pill.slate{background:#e2e8f0;color:#334155}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+  .dot.pulse{background:#10b981;animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  h2.section{font-size:17px;color:var(--ink);margin:26px 2px 4px;display:flex;align-items:center;gap:8px}
+  h2.section::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--sectline),transparent)}
+  .card{background:var(--card);border:1px solid var(--cardbrd);border-radius:16px;padding:18px;margin:12px 0;color:var(--inptext);
+    box-shadow:0 10px 30px rgba(79,70,229,.09);transition:transform .15s ease,box-shadow .15s ease}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:700px){.grid2{grid-template-columns:1fr}}
+  label{display:block;font-size:12.5px;font-weight:600;color:var(--lbl);margin:10px 0 4px}
+  input[type=text],input[type=password],input[type=email],input[type=number],textarea,select{
+    width:100%;padding:10px 12px;font-size:14px;border:1px solid var(--inpbrd);border-radius:10px;background:var(--inpbg);color:var(--inptext);outline:none}
+  input:focus,textarea:focus,select:focus{border-color:var(--primary);background:var(--card);box-shadow:0 0 0 3px rgba(99,102,241,.15)}
+  textarea{min-height:88px;font-family:Consolas,monospace;font-size:13px}
+  button{padding:10px 18px;font-size:14px;font-weight:600;border:0;border-radius:10px;cursor:pointer;color:#fff;
+    background:linear-gradient(135deg,var(--primary),var(--primary2));margin:10px 8px 0 0;transition:transform .1s ease,filter .15s}
+  button:hover{filter:brightness(1.08)} button:active{transform:scale(.97)}
+  button.ghost{background:var(--ghostbg);color:var(--ghosttx)}
+  button.danger{background:linear-gradient(135deg,#f43f5e,#e11d48)}
+  button.teal{background:linear-gradient(135deg,#0d9488,#059669)}
+  button:disabled{background:#94a3b8;cursor:not-allowed}
+  .row{display:flex;gap:12px;flex-wrap:wrap}.row>div{flex:1;min-width:200px}
+  .muted{color:var(--muted);font-size:13px}.mono{font-family:Consolas,monospace;font-size:12.5px}
+  .timing{font-weight:700;font-size:15.5px;color:var(--time);margin:8px 0}
+  .timing span[data-next]{font-variant-numeric:tabular-nums;color:var(--timenext)}
+  #qr{background:#0f172a;color:#fff;padding:14px;border-radius:12px;overflow:auto;font-size:7px;line-height:7px;max-width:100%}
+  .msg{margin-top:8px;white-space:pre-wrap;font-size:13px;min-height:4px}
+  .ok{color:var(--ok)}.err{color:var(--bad)}
+  details{margin-top:10px} summary{cursor:pointer}
+  .prog{height:8px;background:var(--prog);border-radius:6px;overflow:hidden;margin:8px 0 2px}
+  .prog>div{height:100%;background:linear-gradient(90deg,var(--primary),var(--primary2));border-radius:6px;transition:width .5s ease}
+  .swatches{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+  .sw{width:118px;background:var(--card);border:2px solid var(--cardbrd);border-radius:12px;cursor:pointer;overflow:hidden;color:var(--inptext)}
+  .sw.sel{border-color:var(--primary);box-shadow:0 0 0 3px rgba(99,102,241,.2)}
+  .sw .dot-prev{height:34px}
+  .sw .nm{font-size:12px;font-weight:700;padding:6px 8px 0}
+  .sw .md{font-size:10.5px;color:var(--muted);padding:0 8px 8px}
+  .social-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+  .soc{display:inline-flex;align-items:center;gap:8px;padding:9px 18px;border-radius:999px;color:#fff;font-size:13.5px;font-weight:700;text-decoration:none;transition:transform .1s ease,filter .15s}
+  .soc:hover{filter:brightness(1.1)} .soc:active{transform:scale(.96)}
+  .soc svg{width:17px;height:17px}
+  .soc.ig{background:linear-gradient(45deg,#f09433,#dc2743,#bc1888)}
+  .soc.tg{background:#229ED9}
+  .soc.li{background:#0A66C2}
+  .soc.gh{background:#24292f}
+  details.sect{margin:20px 2px 4px}
+  details.sect>summary{cursor:pointer;font-size:17px;font-weight:700;color:var(--ink);display:flex;align-items:center;gap:10px;list-style:none;user-select:none}
+  details.sect>summary::-webkit-details-marker{display:none}
+  details.sect>summary::before{content:"+";display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff;font-size:16px;font-weight:700;flex:none}
+  details.sect[open]>summary::before{content:"–"}
+  details.sect>summary::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--sectline),transparent)}
+  details.pcard{margin:0}
+  details.pcard>summary{cursor:pointer;list-style:none;display:block}
+  details.pcard>summary::-webkit-details-marker{display:none}
+  details.pcard>summary .sum-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  details.pcard>summary .sum-toggle{margin-left:auto;font-size:11px;color:var(--muted);font-weight:600}
+  .err-banner{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin:12px 0;font-size:13px}
+</style>
+</head>
+<body>
+
+<div id="loginOverlay">
+  <div class="login-card" id="loginCard">
+    <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="#c4b5fd" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    <h2>Naukri Dashboard</h2>
+    <p>Enter your panel password to continue</p>
+    <input id="loginPw" type="password" placeholder="Panel password" autocomplete="off" onkeydown="if(event.key==='Enter')login()">
+    <button onclick="login()">Unlock dashboard</button>
+    <div id="loginMsg"></div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <h1>Naukri Dashboard</h1>
+    <span class="pill indigo" id="profCount">0 profiles</span>
+    <span class="spacer"></span>
+    <span id="clock"></span>
+    <button class="ghost" style="margin:0" onclick="logout()">Logout</button>
+  </div>
+  <div id="errBanner" class="err-banner" style="display:none"></div>
+
+  <details class="sect"><summary><span>Add Naukri profile</span></summary>
+  <div class="card">
+    <div class="row">
+      <div><label>Profile Name (= CandidateName for files)</label><input id="fName" type="text" placeholder="Sudhir"></div>
+      <div><label>Link via</label>
+        <select id="fAuth" onchange="toggleAuthTargets('f')">
+          <option value="password">Email + password</option>
+          <option value="cookies">Session cookies</option>
+        </select>
+      </div>
+    </div>
+    <div id="fPassWrap">
+      <div class="row">
+        <div><label>Naukri login email</label><input id="fEmail" type="email" placeholder="you@example.com" oninput="toggleTestCreds()"></div>
+        <div><label>Naukri password</label><input id="fPass" type="password" placeholder="••••••" oninput="toggleTestCreds()"></div>
+      </div>
+      <div class="row" id="fTestCredsWrap" style="display:none">
+        <div><label>&nbsp;</label><button class="teal" onclick="testCreds()">Test creds</button></div>
+        <div><label>&nbsp;</label><button class="ghost" onclick="clearAllSessions()">Clear all saved cookies</button></div>
+      </div>
+      <div id="fOtpWrap" style="display:none">
+        <div class="muted">This account needs 2-step verification — get the code and enter it below.</div>
+        <div class="row">
+          <div><label>Send code to</label><select id="fOtpVia"><option value="mobile">Mobile (SMS)</option><option value="email">Email</option></select></div>
+          <div><label>&nbsp;</label><button class="teal" onclick="sendOtpCode()">Send code</button></div>
+        </div>
+        <div class="row">
+          <div><label>Enter code from Naukri</label><input id="fOtp" type="text" inputmode="numeric" placeholder="6-digit code"></div>
+          <div><label>&nbsp;</label><button onclick="verifyOtpCode()">Verify &amp; check login</button></div>
+        </div>
+      </div>
+    </div>
+    <div id="fCookieWrap" style="display:none">
+      <label>Paste session cookies (one line works: <span class="mono">nauk_at=...; nauk_sid=...; nauk_rt=...</span>)</label>
+      <textarea id="fCookieText" class="mono" style="min-height:60px" placeholder="nauk_at=PASTE_HERE; nauk_sid=PASTE_HERE; nauk_rt=PASTE_HERE"></textarea>
+      <div class="row">
+        <div><label>nauk_at (required)</label><input id="fCk1" type="text" placeholder="paste value"></div>
+        <div><label>nauk_sid (recommended)</label><input id="fCk2" type="text" placeholder="paste value"></div>
+        <div><label>nauk_rt (recommended)</label><input id="fCk3" type="text" placeholder="paste value"></div>
+      </div>
+      <details><summary class="muted"><b>How to get session cookies (steps)</b></summary>
+        <div class="muted">
+          1. In Chrome, log in at <b>naukri.com</b>.<br>
+          2. Press <b>F12</b> → <b>Application</b> tab → <b>Cookies</b> → <b>https://www.naukri.com</b>.<br>
+          3. Find <span class="mono">nauk_at</span>, <span class="mono">nauk_sid</span>, <span class="mono">nauk_rt</span> → double-click each Value → copy.<br>
+          4. Paste above as one line or fill the three boxes — either works.<br>
+          5. Click <b>Add profile</b> — the server verifies the cookies instantly.<br>
+          6. Cookies expire after some time — refresh them via <b>“Refresh login”</b> on the profile card.<br><br>
+          Shortcut — paste this in the <b>Console</b> tab and copy the printed lines:<br>
+          <span class="mono">["nauk_at","nauk_sid","nauk_rt"].forEach(n=>{const v=document.cookie.split("; ").find(r=>r.startsWith(n+"="));console.log(n+"="+(v?v.split("=").slice(1).join("="):"(not readable here — copy it from the Application tab)"))});</span>
+        </div>
+      </details>
+    </div>
+  <div class="card" style="background:var(--ghostbg);border-color:var(--cardbrd)">
+    <b>No password, no copy-paste?</b> <span class="muted">Log in inside a real Chrome window — the session is captured automatically, then the profile is added.</span><br>
+    <button class="teal" onclick="browserLoginNew()">Login via Browser</button>
+    <button class="ghost" onclick="browserCancel()">Cancel</button>
+    <div id="browserMsg" class="msg"></div>
+  </div>
+  <div class="row">
+    <div><label>Resume PDF (verified .pdf → <span class="mono">Name_Resume.pdf</span>)</label><input id="fResume" type="file" accept=".pdf,application/pdf"></div>
+      <div><label>Titles .txt (one per line → <span class="mono">Name_Titles.txt</span>)</label><input id="fTitles" type="file" accept=".txt,text/plain"></div>
+    </div>
+    <label>…or paste titles here (one per line)</label>
+    <textarea id="fTitlesText" placeholder="Senior Backend Developer | Node.js | AWS&#10;Backend Engineer | …"></textarea>
+  <label>Update tasks (at least one)</label>
+  <div class="row">
+    <div><label><input id="fTaskTitle" type="checkbox" checked style="width:auto"> Update Title (headline)</label></div>
+    <div><label><input id="fTaskResume" type="checkbox" checked style="width:auto"> Update Resume (PDF)</label></div>
+  </div>
+  <div id="notifyOffNote" class="muted" style="display:none">WhatsApp is disabled — enable it in Settings to use notifications.</div>
+  <div id="notifySectionAdd">
+    <div class="row">
+      <div><label>Notification type</label>
+        <select id="fNotify" onchange="toggleNotifyTargets('f')">
+          <option value="off">Off</option>
+          <option value="group">Group notification</option>
+          <option value="personal">Personal notification</option>
+        </select>
+      </div>
+      <div id="fGroupWrap" style="display:none"><label>Group name (exact)</label><input id="fGroup" type="text" placeholder="Job Alerts"></div>
+    <div id="fPhoneWrap" style="display:none"><label>Number with country code</label><input id="fPhone" type="text" placeholder="919876543210"></div>
+  </div>
+  <label>Custom success message (optional — <span class="mono">{name} {headline} {resume} {time}</span>, blank = default)</label>
+  <textarea id="fCustomMsg" class="mono" style="min-height:56px" placeholder="Hi Boss,&#10;Profile Headline &amp; Resume updated for {name}."></textarea>
+  </div>
+  <button onclick="addProfile()">Add profile</button>
+    <div id="addMsg" class="msg"></div>
+  </div>
+  </details>
+
+  <h2 class="section">Profiles</h2>
+  <div id="profiles" class="grid2"></div>
+
+  <details class="sect"><summary><span>Settings</span> <span class="pill slate" id="waPill">…</span></summary>
+  <div class="card">
+    <div class="row">
+      <div><label>Update every (hours, per profile, from its last update)</label><input id="setInterval" type="number" min="0.5" max="720" step="0.5"></div>
+      <div><label>&nbsp;</label><button onclick="saveSettings()">Save settings</button></div>
+    </div>
+    <label>Theme — 10 combinations, light &amp; dark (applies instantly)</label>
+    <div class="swatches" id="themeSwatches"></div>
+    <div id="setMsg" class="msg"></div>
+  </div>
+  <div class="card">
+    <div id="waStatus" class="muted">Loading…</div>
+    <div class="row">
+      <div><label>WhatsApp alerts</label><select id="waEnabled"><option value="on">Enabled</option><option value="off">Disabled</option></select></div>
+      <div><label>WhatsApp Name (asked while linking)</label><input id="waName" type="text" placeholder="e.g. My Phone" maxlength="40"></div>
+      <div><label>&nbsp;</label><button class="ghost" onclick="saveWaSettings()">Save</button> <button class="danger" onclick="unlinkWa()">Unlink</button></div>
+    </div>
+    <div id="waMsg" class="msg"></div>
+    <div id="waQrWrap" style="display:none">
+      <p><b>Scan with your phone</b> <span class="muted">(WhatsApp → Settings → Linked devices → Link a device). Refreshes automatically.</span></p>
+      <pre id="qr"></pre>
+    </div>
+    <div class="row">
+      <div><label>Or link by number (with country code)</label><input id="pairPhone" type="text" placeholder="919876543210"></div>
+      <div><label>&nbsp;</label><button class="teal" onclick="pair()">Get pairing code</button></div>
+    </div>
+    <div id="pairMsg" class="msg"></div>
+  </div>
+  <div class="card">
+    <div class="muted">Connect with the developer — say hi / report issues:</div>
+    <div class="social-row">
+      <a class="soc ig" href="https://www.instagram.com/4sudo.su/" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>Instagram</a>
+      <a class="soc tg" href="https://t.me/verifiedharyanvi" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Telegram</a>
+      <a class="soc li" href="https://www.linkedin.com/in/sudhir19/" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg>LinkedIn</a>
+      <a class="soc gh" href="https://github.com/4sudosu" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>GitHub</a>
+    </div>
+  </div>
+  </details>
+</div>
+
+<script>
+let lastSig = "";
+const openCards = new Set();
+function showErr(t){ const b=document.getElementById("errBanner"); if(!b) return; if(t){ b.style.display="block"; b.textContent=t; } else { b.style.display="none"; b.textContent=""; } }
+let appliedTheme = "";
+const LS_KEY = "naukri_panel_token";
+const LS_THEME = "naukri_theme";
+/* ---------- themes: 10 combinations, light & dark ---------- */
+const THEMES = {
+  indigo:  { n: "Indigo Dream", m: "Light", v: { bg1:"#e0e7ff", bg2:"#fae8ff", bg3:"#cffafe", card:"#ffffff", cardbrd:"#ede9fe", topbar:"rgba(238,242,255,.75)", inpbg:"#f8fafc", inpbrd:"#cbd5e1", inptext:"#1e293b", lbl:"#475569", time:"#312e81", timenext:"#6d28d9", sectline:"#c7d2fe", ghostbg:"#eef2ff", ghosttx:"#3730a3", prog:"#eef2ff", prim:"#4f46e5", prim2:"#8b5cf6", ink:"#1e1b4b", muted:"#64748b" } },
+  ocean:   { n: "Ocean Breeze", m: "Light", v: { bg1:"#e0f2fe", bg2:"#f0fdfa", bg3:"#ecfeff", card:"#ffffff", cardbrd:"#cffafe", topbar:"rgba(224,242,254,.8)", inpbg:"#f0fdfa", inpbrd:"#a5d8e6", inptext:"#0c2f3f", lbl:"#3f6b7a", time:"#0c4a6e", timenext:"#0369a1", sectline:"#7dd3fc", ghostbg:"#e0f2fe", ghosttx:"#0c4a6e", prog:"#e0f2fe", prim:"#0284c7", prim2:"#06b6d4", ink:"#0c2f3f", muted:"#3f6b7a" } },
+  emerald: { n: "Emerald Field", m: "Light", v: { bg1:"#d1fae5", bg2:"#fefce8", bg3:"#ecfdf5", card:"#ffffff", cardbrd:"#d1fae5", topbar:"rgba(209,250,229,.8)", inpbg:"#f7fee7", inpbrd:"#a3cfb5", inptext:"#0d3327", lbl:"#3f7a64", time:"#064e3b", timenext:"#047857", sectline:"#6ee7b7", ghostbg:"#d1fae5", ghosttx:"#064e3b", prog:"#d1fae5", prim:"#059669", prim2:"#10b981", ink:"#0d3327", muted:"#3f7a64" } },
+  sunset:  { n: "Sunset Glow", m: "Light", v: { bg1:"#ffedd5", bg2:"#fff7ed", bg3:"#ffe4e6", card:"#ffffff", cardbrd:"#fed7aa", topbar:"rgba(255,237,213,.85)", inpbg:"#fffbeb", inpbrd:"#e8b98a", inptext:"#431407", lbl:"#8a5a33", time:"#7c2d12", timenext:"#c2410c", sectline:"#fdba74", ghostbg:"#ffedd5", ghosttx:"#7c2d12", prog:"#ffedd5", prim:"#ea580c", prim2:"#f43f5e", ink:"#431407", muted:"#8a5a33" } },
+  rose:    { n: "Rose Petal", m: "Light", v: { bg1:"#fce7f3", bg2:"#fdf2f8", bg3:"#fff1f2", card:"#ffffff", cardbrd:"#fbcfe8", topbar:"rgba(252,231,243,.85)", inpbg:"#fdf2f8", inpbrd:"#e5a9c6", inptext:"#4c0f28", lbl:"#8a4a63", time:"#831843", timenext:"#be185d", sectline:"#f9a8d4", ghostbg:"#fce7f3", ghosttx:"#831843", prog:"#fce7f3", prim:"#db2777", prim2:"#f472b6", ink:"#4c0f28", muted:"#8a4a63" } },
+  midnight:{ n: "Midnight", m: "Dark", v: { bg1:"#0f172a", bg2:"#1e1b4b", bg3:"#312e81", card:"#1e293b", cardbrd:"#334155", topbar:"rgba(15,23,42,.85)", inpbg:"#0f172a", inpbrd:"#475569", inptext:"#e2e8f0", lbl:"#94a3b8", time:"#e0e7ff", timenext:"#a5b4fc", sectline:"#4338ca", ghostbg:"#334155", ghosttx:"#e0e7ff", prog:"#334155", prim:"#818cf8", prim2:"#c084fc", ink:"#f1f5f9", muted:"#94a3b8" } },
+  plum:    { n: "Royal Plum", m: "Dark", v: { bg1:"#190d2e", bg2:"#2e1065", bg3:"#3b0764", card:"#241243", cardbrd:"#4c1d95", topbar:"rgba(25,13,46,.88)", inpbg:"#190d2e", inpbrd:"#6b21a8", inptext:"#fae8ff", lbl:"#d8b4fe", time:"#fae8ff", timenext:"#e879f9", sectline:"#7e22ce", ghostbg:"#3b0764", ghosttx:"#fae8ff", prog:"#3b0764", prim:"#e879f9", prim2:"#f0abfc", ink:"#fdf4ff", muted:"#d8b4fe" } },
+  forest:  { n: "Forest Night", m: "Dark", v: { bg1:"#022c22", bg2:"#052e16", bg3:"#052e2b", card:"#062e26", cardbrd:"#065f46", topbar:"rgba(2,44,34,.88)", inpbg:"#022c22", inpbrd:"#047857", inptext:"#d1fae5", lbl:"#6ee7b7", time:"#ecfdf5", timenext:"#34d399", sectline:"#047857", ghostbg:"#064e3b", ghosttx:"#d1fae5", prog:"#064e3b", prim:"#34d399", prim2:"#6ee7b7", ink:"#ecfdf5", muted:"#6ee7b7" } },
+  abyss:   { n: "Abyss", m: "Dark", v: { bg1:"#030712", bg2:"#111827", bg3:"#030712", card:"#111827", cardbrd:"#374151", topbar:"rgba(3,7,18,.88)", inpbg:"#030712", inpbrd:"#4b5563", inptext:"#f3f4f6", lbl:"#9ca3af", time:"#f9fafb", timenext:"#93c5fd", sectline:"#374151", ghostbg:"#1f2937", ghosttx:"#e5e7eb", prog:"#1f2937", prim:"#60a5fa", prim2:"#a78bfa", ink:"#f9fafb", muted:"#9ca3af" } },
+  cocoa:   { n: "Cocoa Ember", m: "Dark", v: { bg1:"#1c0a00", bg2:"#431407", bg3:"#1c0a00", card:"#2a1508", cardbrd:"#7c2d12", topbar:"rgba(28,10,0,.88)", inpbg:"#1c0a00", inpbrd:"#9a3412", inptext:"#ffedd5", lbl:"#fdba74", time:"#fff7ed", timenext:"#fdba74", sectline:"#7c2d12", ghostbg:"#431407", ghosttx:"#ffedd5", prog:"#431407", prim:"#fb923c", prim2:"#f472b6", ink:"#fff7ed", muted:"#fdba74" } },
+};
+const THEME_ORDER = ["indigo","ocean","emerald","sunset","rose","midnight","plum","forest","abyss","cocoa"];
+function currentTheme(){ try{ return localStorage.getItem(LS_THEME) || "indigo"; }catch(e){ return "indigo"; } }
+function applyTheme(id, save){
+  const t = THEMES[id] || THEMES.indigo;
+  const st = document.documentElement.style;
+  for(const k in t.v) st.setProperty("--"+k, t.v[k]);
+  try{ localStorage.setItem(LS_THEME, id); }catch(e){}
+  appliedTheme = id;
+  document.querySelectorAll(".sw").forEach(el=>el.classList.toggle("sel", el.dataset.theme===id));
+  if(save) api("PUT","/api/settings",{theme:id}).then(()=>{ lastSig=""; }).catch(e=>console.error(e));
+}
+function buildSwatches(){
+  const box = document.getElementById("themeSwatches");
+  if(!box) return;
+  box.innerHTML = THEME_ORDER.map(id=>{
+    const t = THEMES[id];
+    return '<div class="sw" data-theme="'+id+'" onclick="applyTheme(\''+id+'\',true)" title="'+t.n+' ('+t.m+')">'
+      + '<div class="dot-prev" style="background:linear-gradient(135deg,'+t.v.prim+','+t.v.prim2+')"></div>'
+      + '<div class="nm">'+t.n+'</div><div class="md">'+t.m+' mode</div></div>';
+  }).join("");
+}
+function token(){ return localStorage.getItem(LS_KEY) || ""; }
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+async function api(method, url, body){
+  const headers = {"content-type":"application/json"};
+  const t = token(); if(t) headers["x-panel-token"] = t;
+  const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(()=>({}));
+  if(r.status === 401 && j.error === "Login required."){ showLogin("Session expired — please log in again."); throw new Error("Login required."); }
+  if(r.status === 423){ showLogin(j.error || "Locked."); throw new Error(j.error || "Locked"); }
+  if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+  return j;
+}
+/* ---------- login gate ---------- */
+function showLogin(msg){
+  document.getElementById("app").style.display = "none";
+  document.getElementById("loginOverlay").style.display = "flex";
+  if(msg) document.getElementById("loginMsg").textContent = msg;
+  setTimeout(()=>document.getElementById("loginPw").focus(), 50);
+}
+function hideLogin(){
+  document.getElementById("loginOverlay").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  document.getElementById("loginMsg").textContent = "";
+  document.getElementById("loginPw").value = "";
+}
+async function login(){
+  const m = document.getElementById("loginMsg"); m.textContent = "Checking…";
+  try{
+    const j = await api("POST","/api/login",{password:document.getElementById("loginPw").value});
+    localStorage.setItem(LS_KEY, j.token);
+    hideLogin(); lastSig = ""; refresh();
+  }catch(e){
+    m.textContent = e.message;
+    const c = document.getElementById("loginCard"); c.classList.remove("shake"); void c.offsetWidth; c.classList.add("shake");
+  }
+}
+function logout(){ localStorage.removeItem(LS_KEY); lastSig=""; showLogin(); }
+/* ---------- helpers ---------- */
+function fmt(n){ return (n<10?"0":"")+n; }
+function countdownText(iso, running){
+  if(running) return "running…";
+  if(!iso) return "not scheduled";
+  let s = Math.floor((Date.parse(iso)-Date.now())/1000);
+  if(s<=0) return "due now…";
+  const h=Math.floor(s/3600); s%=3600; const m=Math.floor(s/60); s%=60;
+  return "in "+h+"h "+fmt(m)+"m "+fmt(s)+"s";
+}
+function tick(){
+  const c = document.getElementById("clock");
+  if(c){ const d=new Date(); c.textContent = d.toLocaleDateString()+" "+fmt(d.getHours())+":"+fmt(d.getMinutes())+":"+fmt(d.getSeconds()); }
+  document.querySelectorAll("[data-next]").forEach(el=>{
+    el.textContent = countdownText(el.getAttribute("data-next"), el.getAttribute("data-running")==="1");
+  });
+}
+function toggleNotifyTargets(prefix){
+  const t = document.getElementById(prefix+"Notify").value;
+  document.getElementById(prefix+"GroupWrap").style.display = t==="group" ? "block" : "none";
+  document.getElementById(prefix+"PhoneWrap").style.display = t==="personal" ? "block" : "none";
+}
+function toggleCardNotify(id){
+  const t = document.getElementById("n-"+id).value;
+  document.getElementById("ng-"+id).style.display = t==="group"?"block":"none";
+  document.getElementById("np-"+id).style.display = t==="personal"?"block":"none";
+}
+function toggleCardAuth(id){
+  const t = document.getElementById("a-"+id).value;
+  document.getElementById("ap-"+id).style.display = t==="password"?"block":"none";
+  document.getElementById("ac-"+id).style.display = t==="cookies"?"block":"none";
+}
+function toggleAuthTargets(prefix){
+  const t = document.getElementById(prefix+"Auth").value;
+  document.getElementById(prefix+"PassWrap").style.display = t==="password" ? "block" : "none";
+  document.getElementById(prefix+"CookieWrap").style.display = t==="cookies" ? "block" : "none";
+}
+function fileAsBase64(file){
+  return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result).split(",")[1]||""); fr.onerror=rej; fr.readAsDataURL(file); });
+}
+function fileAsText(file){
+  return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result||"")); fr.onerror=rej; fr.readAsText(file); });
+}
+function waPill(wa){
+  if(!wa.enabled) return '<span class="pill slate">WhatsApp off</span>';
+  if(wa.connected) return '<span class="pill green"><span class="dot pulse"></span>WhatsApp linked</span>';
+  if(wa.qrPending) return '<span class="pill amber">scan QR below</span>';
+  return '<span class="pill indigo">linking…</span>';
+}
+/* ---------- data ---------- */
+async function refresh(){
+  try{
+    const j = await api("GET","/api/status");
+    if(document.getElementById("app").style.display === "none") hideLogin();
+    const iv = document.getElementById("setInterval");
+    if(!iv.dataset.init && j.settings){ iv.value = j.settings.intervalHours; iv.dataset.init = "1"; }
+    if(j.settings && j.settings.theme && j.settings.theme !== appliedTheme) applyTheme(j.settings.theme, false);
+    const wa = j.wa || {};
+    const acc = (j.settings && j.settings.whatsapp) || {};
+    let s = "Status: " + (!wa.enabled ? "OFF" : wa.connected ? "CONNECTED" : wa.qrPending ? "waiting for scan…" : "connecting…");
+    if(wa.connected){ s += "  |  Linked: +" + (wa.phone || "?"); if(acc.accountName) s += " (" + acc.accountName + ")"; }
+    document.getElementById("waStatus").textContent = s;
+    document.getElementById("waPill").outerHTML = waPill(wa).replace('class="pill', 'id="waPill" class="pill');
+    const we = document.getElementById("waEnabled");
+    if(document.activeElement !== we) we.value = wa.enabled ? "on" : "off";
+    const wn = document.getElementById("waName");
+    if(document.activeElement !== wn && acc.accountName !== undefined) wn.value = acc.accountName || "";
+    const showQr = !!(wa.enabled && wa.qrPending && wa.qrAscii);
+    document.getElementById("waQrWrap").style.display = showQr ? "block" : "none";
+    if(showQr) document.getElementById("qr").textContent = wa.qrAscii;
+    const nAdd = document.getElementById("notifySectionAdd");
+    if(nAdd) nAdd.style.display = wa.enabled ? "block" : "none";
+    const nNote = document.getElementById("notifyOffNote");
+    if(nNote) nNote.style.display = wa.enabled ? "none" : "block";
+    const sig = JSON.stringify([j.profiles, wa.connected, wa.qrPending, wa.enabled, j.intervalHours, j.locked]);
+    if(sig === lastSig) return;
+    lastSig = sig;
+    showErr(null);
+    document.getElementById("profCount").textContent = j.profiles.length + (j.profiles.length===1?" profile":" profiles");
+    const box = document.getElementById("profiles");
+    const list = Array.isArray(j.profiles) ? j.profiles : [];
+    document.querySelectorAll("#profiles details.pcard").forEach(d=>{ if(d.open) openCards.add(d.dataset.pid); else openCards.delete(d.dataset.pid); });
+    if(!list.length){ box.innerHTML = '<div class="card muted">No profiles yet — add your first one above.</div>'; return; }
+    box.innerHTML = list.map(p=>{
+      try {
+      const last = p.lastRun ? new Date(p.lastRun).toLocaleString() : "never";
+      const nt = p.notify.type==="group" ? ("Group: "+esc(p.notify.group)) : p.notify.type==="personal" ? ("Personal: +"+esc(p.notify.phone)) : "Off";
+      const pct = p.titlesTotal ? Math.round(((p.titleIndex % p.titlesTotal) / p.titlesTotal) * 100) : 0;
+      const st = p.running
+        ? '<span class="pill green"><span class="dot pulse"></span>running</span>'
+        : (p.nextRun ? '<span class="pill indigo">scheduled</span>' : '<span class="pill slate">idle</span>');
+      return '<details class="pcard card" data-pid="'+p.id+'">'
+        + '<summary><div class="sum-head"><b style="font-size:16px">'+esc(p.name)+'</b> '+st+'<span class="sum-toggle">expand</span></div>'
+        + '<div class="muted">'+esc(p.email)+'</div>'
+        + '<div><span class="pill slate">Title '+(p.titleIndex+1)+' of '+p.titlesTotal+'</span> '
+        + '<span class="pill slate">'+(p.authMethod==="cookies"?"cookies":"email+pass")+'</span> '
+        + '<span class="pill slate">'+(p.tasks.title&&p.tasks.resume?"title+resume":p.tasks.title?"title only":"resume only")+'</span> '
+        + '<span class="pill slate">'+esc(nt)+'</span></div>'
+        + '<div class="prog"><div style="width:'+pct+'%"></div></div>'
+        + '<div class="timing">Last: '+esc(last)+' &nbsp;|&nbsp; Next: <span data-next="'+esc(p.nextRun||"")+'" data-running="'+(p.running?1:0)+'">-</span></div>'
+        + '<div onclick="event.preventDefault();runNow(\''+p.id+'\')"><button>Update now for '+esc(p.name)+'</button></div>'
+        + '</summary>'
+        + '<div class="muted">Headline: '+esc(p.lastStatus)+'<br>Resume: '+esc(p.lastResume)+'</div>'
+        + (wa.enabled
+        ? '<div class="row"><div><label>Notification</label><select id="n-'+p.id+'" onchange="toggleCardNotify(\''+p.id+'\')">'
+        + '<option value="off"'+(p.notify.type==="off"?" selected":"")+'>Off</option>'
+        + '<option value="group"'+(p.notify.type==="group"?" selected":"")+'>Group notification</option>'
+        + '<option value="personal"'+(p.notify.type==="personal"?" selected":"")+'>Personal notification</option>'
+        + '</select></div>'
+        + '<div id="ng-'+p.id+'" style="display:'+(p.notify.type==="group"?"block":"none")+'"><label>Group name</label><input id="g-'+p.id+'" type="text" value="'+esc(p.notify.type==="group"?p.notify.group:"")+'"></div>'
+        + '<div id="np-'+p.id+'" style="display:'+(p.notify.type==="personal"?"block":"none")+'"><label>Number + country code</label><input id="p-'+p.id+'" type="text" value="'+esc(p.notify.type==="personal"?p.notify.phone:"")+'"></div></div>'
+        + '<label>Custom success message (optional — {name} {headline} {resume} {time})</label><textarea id="c-'+p.id+'" class="mono" style="min-height:52px">'+esc(p.notify.customMsg||"")+'</textarea>'
+        + '<button class="ghost" onclick="saveNotify(\''+p.id+'\')">Save notification</button>'
+        : '<div class="muted">Notifications hidden — WhatsApp is disabled. Enable it in Settings to configure.</div>')
+        + '<div class="row"><div><label><input id="t-'+p.id+'" type="checkbox"'+(p.tasks.title?" checked":"")+' style="width:auto"> Update Title</label></div>'
+        + '<div><label><input id="r-'+p.id+'" type="checkbox"'+(p.tasks.resume?" checked":"")+' style="width:auto"> Update Resume</label></div>'
+        + '<div><label>&nbsp;</label><button class="ghost" onclick="saveTasks(\''+p.id+'\')">Save tasks</button></div></div>'
+        + '<details><summary class="muted">Edit files (Titles.txt, Resume.pdf) — current: '+p.titlesTotal+' titles • resume '+(p.resumePresent?"present":"missing")+'</summary>'
+        + '<label>New titles .txt file (replaces all, rotation restarts at #1)</label><input id="ft-'+p.id+'" type="file" accept=".txt,text/plain">'
+        + '<label>…or paste new titles (one per line)</label><textarea id="fx-'+p.id+'" class="mono" style="min-height:56px"></textarea>'
+        + '<label>New resume PDF (replaces saved resume)</label><input id="fr-'+p.id+'" type="file" accept=".pdf,application/pdf">'
+        + '<button class="ghost" onclick="saveFiles(\''+p.id+'\')">Save files</button></details>'
+        + '<details><summary class="muted">Refresh login (switch method / re-paste cookies)</summary>'
+        + '<div class="row"><div><label>Method</label><select id="a-'+p.id+'" onchange="toggleCardAuth(\''+p.id+'\')">'
+        + '<option value="password"'+(p.authMethod!=="cookies"?" selected":"")+'>Email + password</option>'
+        + '<option value="cookies"'+(p.authMethod==="cookies"?" selected":"")+'>Session cookies</option>'
+        + '</select></div></div>'
+        + '<div id="ap-'+p.id+'" style="display:'+(p.authMethod==="cookies"?"none":"block")+'"><div class="row">'
+        + '<div><label>Email</label><input id="ae-'+p.id+'" type="email"></div>'
+        + '<div><label>Password</label><input id="aw-'+p.id+'" type="password"></div></div></div>'
+        + '<div id="ac-'+p.id+'" style="display:'+(p.authMethod==="cookies"?"block":"none")+'">'
+        + '<label>Paste cookies (nauk_at=...; nauk_sid=...; nauk_rt=...)</label>'
+        + '<textarea id="at-'+p.id+'" class="mono" style="min-height:60px"></textarea>'
+        + '<div class="row"><div><label>nauk_at</label><input id="ak1-'+p.id+'" type="text"></div>'
+        + '<div><label>nauk_sid</label><input id="ak2-'+p.id+'" type="text"></div>'
+        + '<div><label>nauk_rt</label><input id="ak3-'+p.id+'" type="text"></div></div></div>'
+        + '<button class="ghost" onclick="saveAuth(\''+p.id+'\')">Save login</button> '
+        + '<button class="teal" onclick="browserLoginRefresh(\''+p.id+'\')">Login via Browser</button></details><br>'
+        + '<button class="ghost" onclick="clearCookies(\''+p.id+'\')">Clear cookies</button>'
+        + '<button class="teal" onclick="testLogin(\''+p.id+'\')">Test login</button>'
+        + '<button class="danger" onclick="delProfile(\''+p.id+'\',\''+esc(p.name).replace(/'/g,"")+'\')">Delete</button>'
+        + '<div class="msg" id="m-'+p.id+'"></div>'
+        + '</details>';
+      }catch(e){ return '<div class="card err">Could not render a profile: '+esc(e.message)+'</div>'; }
+    }).join("");
+    document.querySelectorAll("#profiles details.pcard").forEach(d=>{ if(openCards.has(d.dataset.pid)) d.open = true; });
+    tick();
+  }catch(e){
+    if(e.message === "Login required." || e.message === "Locked.") return;
+    console.error(e);
+    showErr("Dashboard update failed: "+e.message);
+  }
+}
+/* ---------- actions (session token rides along automatically) ---------- */
+async function addProfile(){
+  const msg = document.getElementById("addMsg"); msg.className="msg"; msg.textContent="Adding…";
+  try{
+    if(!document.getElementById("fTaskTitle").checked && !document.getElementById("fTaskResume").checked){ msg.className="msg err"; msg.textContent="Select at least one task: Title and/or Resume."; return; }
+    const method = document.getElementById("fAuth").value;
+    const rf = document.getElementById("fResume").files[0];
+    const tf = document.getElementById("fTitles").files[0];
+    const body = {
+      name: document.getElementById("fName").value.trim(),
+      notify: { type: document.getElementById("fNotify").value, group: document.getElementById("fGroup").value, phone: document.getElementById("fPhone").value, customMsg: document.getElementById("fCustomMsg").value },
+      tasks: { title: document.getElementById("fTaskTitle").checked, resume: document.getElementById("fTaskResume").checked },
+      titlesText: document.getElementById("fTitlesText").value
+    };
+    if(method === "cookies"){
+      body.auth = { method: "cookies",
+        cookieText: document.getElementById("fCookieText").value,
+        cookies: { nauk_at: document.getElementById("fCk1").value, nauk_sid: document.getElementById("fCk2").value, nauk_rt: document.getElementById("fCk3").value } };
+    } else {
+      body.auth = { method: "password",
+        email: document.getElementById("fEmail").value.trim(),
+        password: document.getElementById("fPass").value };
+    }
+    if(rf){
+      if(!/\.pdf$/i.test(rf.name)){ msg.className="msg err"; msg.textContent='Resume must be a .pdf file (you chose "'+rf.name+'").'; return; }
+      body.resumeBase64 = await fileAsBase64(rf); body.resumeName = rf.name;
+    }
+    if(tf){
+      if(!/\.txt$/i.test(tf.name)){ msg.className="msg err"; msg.textContent='Titles file must be a .txt file (you chose "'+tf.name+'").'; return; }
+      body.titlesText = await fileAsText(tf); body.titlesName = tf.name;
+    }
+    const j = await api("POST","/api/profiles",body);
+    msg.className="msg ok"; msg.textContent="Added "+j.profile.name+" — first update started.";
+    ["fName","fPass","fTitlesText","fCookieText","fCk1","fCk2","fCk3","fCustomMsg"].forEach(id=>document.getElementById(id).value="");
+    document.getElementById("fTaskTitle").checked = true; document.getElementById("fTaskResume").checked = true;
+    document.getElementById("fResume").value=""; document.getElementById("fTitles").value="";
+    lastSig = ""; refresh();
+  }catch(e){ msg.className="msg err"; msg.textContent="Error: "+e.message; }
+}
+async function runNow(id){
+  const m = document.getElementById("m-"+id); m.textContent="Started…";
+  try{ await api("POST","/api/profiles/"+id+"/run",{}); m.textContent="Update started — watch the status above."; lastSig=""; refresh(); }
+  catch(e){ m.textContent="Error: "+e.message; }
+}
+async function delProfile(id,name){
+  if(!confirm("Delete profile '"+name+"' and its Titles/Resume files?")) return;
+  try{ await api("DELETE","/api/profiles/"+id,{}); lastSig=""; refresh(); }
+  catch(e){ document.getElementById("m-"+id).textContent="Error: "+e.message; }
+}
+async function saveFiles(id){
+  const m = document.getElementById("m-"+id); m.textContent="Saving files…";
+  try{
+    const tf = document.getElementById("ft-"+id).files[0];
+    const rf = document.getElementById("fr-"+id).files[0];
+    const body = {};
+    if(tf){
+      if(!/\.txt$/i.test(tf.name)){ m.textContent='Error: Titles file must be a .txt file (you chose "'+tf.name+'").'; return; }
+      body.titlesText = await fileAsText(tf); body.titlesName = tf.name;
+    } else {
+      const pasted = document.getElementById("fx-"+id).value.trim();
+      if(pasted) body.titlesText = pasted;
+    }
+    if(rf){
+      if(!/\.pdf$/i.test(rf.name)){ m.textContent='Error: Resume must be a .pdf file (you chose "'+rf.name+'").'; return; }
+      body.resumeBase64 = await fileAsBase64(rf); body.resumeName = rf.name;
+    }
+    if(body.titlesText === undefined && !body.resumeBase64){ m.textContent="Nothing to update — choose a file or paste titles."; return; }
+    await api("PUT","/api/profiles/"+id+"/files",body);
+    m.textContent="Files updated.";
+    document.getElementById("fx-"+id).value=""; document.getElementById("ft-"+id).value=""; document.getElementById("fr-"+id).value="";
+    lastSig=""; refresh();
+  }catch(e){ m.textContent="Error: "+e.message; }
+}
+async function saveNotify(id){
+  const m = document.getElementById("m-"+id); m.textContent="Saving…";
+  try{
+    await api("PUT","/api/profiles/"+id+"/notify",{ notify:{ type:document.getElementById("n-"+id).value, group:document.getElementById("g-"+id).value, phone:document.getElementById("p-"+id).value, customMsg:document.getElementById("c-"+id).value } });
+    m.textContent="Notification saved."; lastSig=""; refresh();
+  }catch(e){ m.textContent="Error: "+e.message; }
+}
+async function saveTasks(id){
+  const m = document.getElementById("m-"+id); m.textContent="Saving tasks…";
+  try{
+    const t = document.getElementById("t-"+id).checked, r = document.getElementById("r-"+id).checked;
+    if(!t && !r){ m.textContent="Error: select at least one task."; return; }
+    await api("PUT","/api/profiles/"+id+"/tasks",{tasks:{title:t,resume:r}});
+    m.textContent="Tasks saved."; lastSig=""; refresh();
+  }catch(e){ m.textContent="Error: "+e.message; }
+}
+async function clearCookies(id){
+  if(!confirm("Clear this profile's saved session cookies? Re-link via browser or paste fresh ones afterwards.")) return;
+  const m = document.getElementById("m-"+id); m.textContent="Clearing…";
+  try{ await api("POST","/api/profiles/"+id+"/clear-cookies",{}); m.textContent="Saved cookies cleared."; lastSig=""; refresh(); }
+  catch(e){ m.textContent="Error: "+e.message; }
+}
+async function testLogin(id){
+  const m = document.getElementById("m-"+id); m.textContent="Testing login with Naukri…";
+  try{
+    const j = await api("POST","/api/profiles/"+id+"/test-login",{});
+    m.textContent="Login works ("+j.method+", Naukri profile "+j.profileId+"). Nothing was changed.";
+  }catch(e){ m.textContent="Error: "+e.message; }
+}
+async function saveAuth(id){
+  const m = document.getElementById("m-"+id); m.textContent="Saving login…";
+  try{
+    const method = document.getElementById("a-"+id).value;
+    const auth = method==="cookies"
+      ? { method: "cookies",
+          cookieText: document.getElementById("at-"+id).value,
+          cookies: { nauk_at: document.getElementById("ak1-"+id).value, nauk_sid: document.getElementById("ak2-"+id).value, nauk_rt: document.getElementById("ak3-"+id).value } }
+      : { method: "password",
+          email: document.getElementById("ae-"+id).value.trim(),
+          password: document.getElementById("aw-"+id).value };
+    await api("PUT","/api/profiles/"+id+"/auth",{auth});
+    m.textContent="Login updated (cookies verified live)."; lastSig=""; refresh();
+  }catch(e){ m.textContent="Error: "+e.message; }
+}
+async function saveSettings(){
+  const m = document.getElementById("setMsg"); m.className="msg"; m.textContent="Saving…";
+  try{
+    const j = await api("PUT","/api/settings",{ intervalHours:parseFloat(document.getElementById("setInterval").value) });
+    m.className="msg ok"; m.textContent="Interval saved: every "+j.intervalHours+"h. All profiles re-anchored.";
+  }catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
+}
+async function saveWaSettings(){
+  const m = document.getElementById("waMsg"); m.className="msg"; m.textContent="Saving…";
+  try{
+    const j = await api("PUT","/api/settings/whatsapp",{ enabled:document.getElementById("waEnabled").value==="on", accountName:document.getElementById("waName").value });
+    m.className="msg ok"; m.textContent="WhatsApp: "+(j.whatsapp.enabled?"ON":"OFF")+(j.whatsapp.accountName?" ("+j.whatsapp.accountName+")":"")+".";
+    refresh();
+  }catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
+}
+async function unlinkWa(){
+  if(!confirm("Unlink the WhatsApp account? You will need to scan/pair again.")) return;
+  const m = document.getElementById("waMsg"); m.className="msg"; m.textContent="Unlinking…";
+  try{ await api("POST","/api/whatsapp/unlink",{}); m.className="msg ok"; m.textContent="Unlinked. Scan the QR or pair by number to link again."; refresh(); }
+  catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
+}
+async function pair(){
+  const m = document.getElementById("pairMsg"); m.className="msg"; m.textContent="Requesting code…";
+  try{
+    const nm = document.getElementById("waName").value.trim();
+    if(nm){ try{ await api("PUT","/api/settings/whatsapp",{ accountName:nm }); }catch(e){} }
+    const j = await api("POST","/api/whatsapp/pair",{ phone:document.getElementById("pairPhone").value.trim() });
+    m.className="msg ok"; m.textContent="Type this on your phone within ~60s (Linked devices → Link with phone number):  "+j.code;
+  }catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
+}
+/* ---------- browser login (real Chrome, auto-captured session) ---------- */
+let browserTimer = null;
+async function browserBegin(profileId, profileName, onDone, onFail, msgEl){
+  try{
+    msgEl.textContent = "Opening Chrome — log in to Naukri inside that window…";
+    await api("POST","/api/browser/start",{profileId, profileName});
+    window._onBrowserDone = onDone; window._onBrowserFail = onFail; window._browserMsgEl = msgEl;
+    if(browserTimer) clearInterval(browserTimer);
+    browserTimer = setInterval(browserPoll, 2500);
+  }catch(e){ msgEl.textContent = "Error: "+e.message; }
+}
+async function browserPoll(){
+  try{
+    const s = await api("GET","/api/browser/status");
+    const b = s.browser || {};
+    if(!b.active){ clearInterval(browserTimer); browserTimer = null; return; }
+    if(window._browserMsgEl) window._browserMsgEl.textContent = "Waiting for browser login… ("+b.elapsedSec+"s of 5 min)";
+    if(b.status === "done"){
+      clearInterval(browserTimer); browserTimer = null;
+      const c = await api("GET","/api/browser/cookies");
+      if(window._onBrowserDone) window._onBrowserDone(c.cookies);
+    } else if(b.status === "timeout" || b.status === "closed"){
+      clearInterval(browserTimer); browserTimer = null;
+      if(window._onBrowserFail) window._onBrowserFail(b.error || b.status);
+    }
+  }catch(e){ clearInterval(browserTimer); browserTimer = null; }
+}
+async function browserCancel(){
+  try{ await api("POST","/api/browser/cancel",{}); }catch(e){}
+  if(browserTimer){ clearInterval(browserTimer); browserTimer = null; }
+  document.getElementById("browserMsg").textContent = "Cancelled.";
+}
+function toggleTestCreds() {
+  const email = document.getElementById("fEmail").value.trim();
+  const pass = document.getElementById("fPass").value;
+  document.getElementById("fTestCredsWrap").style.display = (email && pass) ? "flex" : "none";
+}
+async function testCreds() {
+  const msg = document.getElementById("addMsg");
+  const email = document.getElementById("fEmail").value.trim();
+  const pass = document.getElementById("fPass").value;
+  if (!email || !pass) { msg.className = "msg err"; msg.textContent = "Fill email & password first"; return; }
+  document.getElementById("fOtpWrap").style.display = "none";
+  msg.className = "msg"; msg.textContent = "Checking login with Naukri…";
+  try {
+    const j = await api("POST", "/api/test-creds", { email, password: pass });
+    if (j.needOtp) {
+      msg.className = "msg"; msg.textContent = j.message || "2-step verification needed — get the code below.";
+      document.getElementById("fOtpWrap").style.display = "block";
+      return;
+    }
+    msg.className = "msg ok"; msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ") — you can add the profile now.";
+  } catch (e) {
+    msg.className = "msg err"; msg.textContent = "Error: " + e.message;
+  }
+}
+async function sendOtpCode() {
+  const msg = document.getElementById("addMsg");
+  const email = document.getElementById("fEmail").value.trim();
+  const via = document.getElementById("fOtpVia").value;
+  if (!email) { msg.className = "msg err"; msg.textContent = "Fill email first."; return; }
+  msg.className = "msg"; msg.textContent = "Sending code…";
+  try {
+    const j = await api("POST", "/api/test-creds/send-otp", { email, via });
+    msg.className = "msg ok"; msg.textContent = "Code sent to your " + (j.sentTo === "email" ? "email" : "mobile") + " — enter it below.";
+  } catch (e) {
+    msg.className = "msg err"; msg.textContent = "Error: " + e.message;
+  }
+}
+async function verifyOtpCode() {
+  const msg = document.getElementById("addMsg");
+  const email = document.getElementById("fEmail").value.trim();
+  const otp = document.getElementById("fOtp").value.trim();
+  const via = document.getElementById("fOtpVia").value;
+  if (!otp) { msg.className = "msg err"; msg.textContent = "Enter the code first."; return; }
+  msg.className = "msg"; msg.textContent = "Verifying code…";
+  try {
+    const j = await api("POST", "/api/test-creds/verify-otp", { email, otp, via });
+    msg.className = "msg ok"; msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ") — you can add the profile now.";
+    document.getElementById("fOtpWrap").style.display = "none";
+  } catch (e) {
+    msg.className = "msg err"; msg.textContent = "Error: " + e.message;
+  }
+}
+async function clearAllSessions() {
+  if (!confirm("Clear the browser login session + all profiles' saved cookies? Your WhatsApp link stays untouched.")) return;
+  const msg = document.getElementById("addMsg");
+  msg.className = "msg"; msg.textContent = "Clearing saved cookies…";
+  try {
+    const j = await api("POST", "/api/clear-all-sessions", {});
+    msg.className = "msg ok";
+    msg.textContent = "Cleared cookies: " + (j.cleared?.join(", ") || "nothing to clear") + ". WhatsApp link untouched.";
+    refresh();
+  } catch (e) {
+    msg.className = "msg err"; msg.textContent = "Error: " + e.message;
+  }
+}
+function browserLoginNew(){
+  const msg = document.getElementById("browserMsg");
+  const nm = document.getElementById("fName").value.trim() || "new profile";
+  browserBegin("new", nm,
+    (cookies)=>{
+      const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
+      document.getElementById("fAuth").value = "cookies"; toggleAuthTargets("f");
+      document.getElementById("fCookieText").value = "nauk_at="+(cookies.nauk_at||"")+"; nauk_sid="+(cookies.nauk_sid||"")+"; nauk_rt="+(cookies.nauk_rt||"");
+      document.getElementById("fCk1").value = cookies.nauk_at || "";
+      document.getElementById("fCk2").value = cookies.nauk_sid || "";
+      document.getElementById("fCk3").value = cookies.nauk_rt || "";
+      msg.textContent = "Session captured ("+names.join(", ")+") — adding profile…";
+      addProfile();
+    },
+    (err)=>{ msg.textContent = "Browser login failed: "+err; },
+    msg);
+}
+function browserLoginRefresh(id){
+  const m = document.getElementById("m-"+id);
+  browserBegin(id, "profile",
+    async (cookies)=>{
+      const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
+      m.textContent = "Session captured ("+names.join(", ")+") — saving…";
+      try{
+        await api("PUT","/api/profiles/"+id+"/auth",{auth:{method:"cookies",cookies}});
+        m.textContent = "Browser session saved (verified live)."; lastSig=""; refresh();
+      }catch(e){ m.textContent = "Error: "+e.message; }
+    },
+    (err)=>{ m.textContent = "Browser login failed: "+err; },
+    m);
+}
+/* ---------- boot: nothing visible without login ---------- */
+buildSwatches();
+applyTheme(currentTheme(), false);
+if(token()){ refresh(); } else { showLogin(); }
+setInterval(refresh,10000); setInterval(tick,1000);
+</script>
+</body>
+</html>

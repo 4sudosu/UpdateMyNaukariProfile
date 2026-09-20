@@ -1,0 +1,6 @@
+node_modules/
+.env
+wa-session/
+browser-profile/
+profiles/
+settings.json
