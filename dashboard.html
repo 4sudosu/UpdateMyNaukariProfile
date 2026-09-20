@@ -466,8 +466,9 @@ async function refresh(){
         + '<span class="pill indigo">'+esc(p.scheduleText||"Every ?h")+'</span> '
         + '<span class="pill slate">'+esc(nt)+'</span></div>'
         + '<div class="prog"><div style="width:'+pct+'%"></div></div>'
-        + '<div class="timing">Last: '+esc(last)+' &nbsp;|&nbsp; Next: <span data-next="'+esc(p.nextRun||"")+'" data-running="'+(p.running?1:0)+'">-</span></div>'
-        + '<div onclick="event.preventDefault();runNow(\''+p.id+'\')"><button>Update now for '+esc(p.name)+'</button></div>'
+        + '<div class="timing">Last: '+esc(last)+' &nbsp;|&nbsp; Next: <span data-next="'+esc(p.nextRun||"")+'" data-running="'+(p.running?1:0)+'">-</span>'+(p.nextKind==="retry"?' <span class="pill amber">retry</span>':"")+'</div>'
+        + '<div><span onclick="event.preventDefault();runNow(\''+p.id+'\')"><button>Update now for '+esc(p.name)+'</button></span> '
+        + '<span onclick="event.preventDefault();clearLogs(\''+p.id+'\')"><button class="ghost">Clear logs</button></span></div>'
         + '</summary>'
         + '<div class="muted">Headline: '+esc(p.lastStatus)+'<br>Resume: '+esc(p.lastResume)+'</div>'
         + (wa.enabled
@@ -637,6 +638,11 @@ async function saveTasks(id){
     await api("PUT","/api/profiles/"+id+"/tasks",{tasks:{title:t,resume:r}});
     m.textContent="Tasks saved."; lastSig=""; refresh();
   }catch(e){ m.textContent="Error: "+e.message; }
+}
+async function clearLogs(id){
+  const m = document.getElementById("m-"+id); m.textContent="Clearing…";
+  try{ await api("POST","/api/profiles/"+id+"/clear-logs",{}); m.textContent="Logs cleared."; lastSig=""; refresh(); }
+  catch(e){ m.textContent="Error: "+e.message; }
 }
 async function clearCookies(id){
   if(!confirm("Clear this profile's saved session cookies? Re-link via browser or paste fresh ones afterwards.")) return;

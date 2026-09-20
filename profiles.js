@@ -292,14 +292,12 @@ function addProfile(reg, { name, auth, tasks, schedule, titlesText, titlesOrigNa
 function deleteProfile(reg, id) {
   const i = reg.profiles.findIndex((p) => p.id === id);
   if (i === -1) throw new Error("Profile not found");
-  const [p] = reg.profiles.splice(i, 1);
+  const p = reg.profiles[i];
+  // Remove files FIRST — if a file is locked, throw before touching the entry.
   for (const f of [titlesPath(p), resumePath(p)]) {
-    try {
-      if (fs.existsSync(f)) fs.unlinkSync(f);
-    } catch {
-      // ignore
-    }
+    if (fs.existsSync(f)) fs.unlinkSync(f);
   }
+  reg.profiles.splice(i, 1);
   saveRegistry(reg);
   return p;
 }

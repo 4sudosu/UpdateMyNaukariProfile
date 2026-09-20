@@ -717,26 +717,60 @@ function planNext(p, now) {
   return due <= now ? now : due;
 }
 
-// Run once via the queue, then re-plan (success) or retry in 1h (failure).
+const nextKinds = {}; // id -> 'retry' | 'slot' (why the countdown exists)
+
+// Next strictly-future slot for daily/window (no catch-up-now).
+function nextSlotFuture(p, now) {
+  try {
+    const mode = (p.schedule && p.schedule.mode) || "interval";
+    if (mode === "daily" && parseHM(p.schedule.time)) return nextDaily(p.schedule.time, now);
+    if (mode === "window") {
+      const f = parseHM(p.schedule.from);
+      const t = parseHM(p.schedule.to);
+      if (f && t && f.mins < t.mins) {
+        const day = new Date(now);
+        day.setHours(0, 0, 0, 0);
+        const w0 = day.getTime() + 86400000 + f.mins * 60000;
+        const w1 = day.getTime() + 86400000 + t.mins * 60000;
+        return w0 + Math.random() * (w1 - w0);
+      }
+    }
+  } catch {}
+  return now + intervalMs();
+}
+
+function isQuotaErrorText(t) {
+  return /quota|rate.?limit|too many|429/i.test(t || "");
+}
+
+// Run once via the queue, then re-plan (success) or back off (failure).
+// Quota/rate-limit failures wait for the next slot — retrying hourly would
+// burn the login budget forever.
 function cycleProfile(id) {
   return enqueueProfileRun(id).then((ok) => {
     const p = profiles.getProfile(reg, id);
     if (!p) return ok;
     if (ok) {
       const t = planNext(p);
-      scheduleProfile(p, Math.max(1000, t - Date.now()));
+      scheduleProfile(p, Math.max(1000, t - Date.now()), "slot");
+    } else if (isQuotaErrorText(p.lastStatus) && ((p.schedule && p.schedule.mode) || "interval") !== "interval") {
+      const t = nextSlotFuture(p, Date.now());
+      scheduleProfile(p, Math.max(60000, t - Date.now()), "slot");
+    } else if (isQuotaErrorText(p.lastStatus)) {
+      scheduleProfile(p, 12 * 60 * 60 * 1000, "retry");
     } else {
-      scheduleProfile(p, 60 * 60 * 1000);
+      scheduleProfile(p, 60 * 60 * 1000, "retry");
     }
     return ok;
   });
 }
 
-function scheduleProfile(p, delayMs) {
+function scheduleProfile(p, delayMs, kind) {
   if (timers[p.id]) clearTimeout(timers[p.id]);
   nextRuns[p.id] = new Date(Date.now() + delayMs).toISOString();
+  nextKinds[p.id] = kind || "slot";
   timers[p.id] = setTimeout(() => cycleProfile(p.id), delayMs);
-  log(`[${p.name}] next update in ${(delayMs / 3600000).toFixed(2)}h`);
+  log(`[${p.name}] next update in ${(delayMs / 3600000).toFixed(2)}h${nextKinds[p.id] === "retry" ? " (retry)" : ""}`);
 }
 
 function unscheduleProfile(id) {
@@ -745,6 +779,7 @@ function unscheduleProfile(id) {
     delete timers[id];
   }
   delete nextRuns[id];
+  delete nextKinds[id];
   delete running[id];
 }
 
@@ -903,6 +938,7 @@ function publicProfile(p) {
     titleIndex: titles.length ? p.titleIndex % titles.length : 0,
     lastRun: p.lastRun,
     nextRun: nextRuns[p.id] || null,
+    nextKind: nextKinds[p.id] || null,
     running: !!running[p.id],
     lastStatus: p.lastStatus,
     lastResume: p.lastResume,
@@ -1270,6 +1306,22 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e.message });
       }
+      return;
+    }
+
+    // POST /api/profiles/:id/clear-logs — wipe displayed status lines (schedule untouched)
+    if (parts[1] === "profiles" && parts[2] && parts[3] === "clear-logs" && req.method === "POST") {
+      const p = profiles.getProfile(reg, parts[2]);
+      if (!p) {
+        sendJson(res, 404, { ok: false, error: "Profile not found" });
+        return;
+      }
+      p.lastStatus = "—";
+      p.lastResume = "—";
+      p.lastHeadline = "";
+      profiles.saveRegistry(reg);
+      log(`[${p.name}] logs cleared`);
+      sendJson(res, 200, { ok: true, profile: publicProfile(p) });
       return;
     }
 
