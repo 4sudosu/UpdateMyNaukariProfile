@@ -342,9 +342,21 @@ async function naukriLogin(ctx) {
   });
   storeCookies(ctx.jar, getSetCookies(res));
   const text = await res.text();
-  if (!res.ok) throw new Error(`Login failed (${res.status}): ${text.slice(0, 300)}`);
+  if (!res.ok) {
+    if (/mfa|otp|verif|two[\s-]?step|two[\s-]?factor|challenge|authenticator|verify/i.test(text)) {
+      throw new Error(
+        `MFA_REQUIRED: this account needs a verification code every fresh login — background password login cannot solve codes. Refresh the session once via Test login (enter code) or switch to session cookies / Login via Browser, then updates reuse that session without MFA. Server said: ${text.slice(0, 200)}`
+      );
+    }
+    throw new Error(`Login failed (${res.status}): ${text.slice(0, 300)}`);
+  }
   const token = ctx.jar.get("nauk_at");
   if (!token) {
+    if (/mfa|otp|verif|two[\s-]?step|two[\s-]?factor|challenge|authenticator|verify/i.test(text)) {
+      throw new Error(
+        "MFA_REQUIRED: Naukri accepted the password but asked for a verification code instead of a session — refresh the session once via Test login (enter code) or switch to session cookies / Login via Browser."
+      );
+    }
     throw new Error(`Login got no nauk_at cookie — possible OTP block. Response: ${text.slice(0, 300)}`);
   }
   return token;
@@ -497,7 +509,7 @@ async function alertSessionDead(p, err) {
 
 // Login/session-looking failures (expired cookies, bad password, OTP blocks).
 function isAuthError(err) {
-  return /login failed|no nauk_at|otp|unauthor|401|403|forbidden|session|cookie|token/i.test(
+  return /login failed|no nauk_at|otp|mfa_required|mfa|verif|unauthor|401|403|forbidden|session|cookie|token|verification code/i.test(
     String((err && err.message) || err || "")
   );
 }
@@ -600,11 +612,13 @@ async function runProfile(p) {
     const ctx = { jar: createJar(), email: secretEmail(p), password: secretPass(p) };
     let bearer = null;
     let profileId = null;
+    let reusedSession = false;
     try {
       const s = await trySavedSession(p);
       bearer = s.bearer;
       ctx.jar = s.jar;
       profileId = s.profileId;
+      reusedSession = true;
       log(`[${p.name}] reusing saved session (login skipped)`);
     } catch (e) {
       log(`[${p.name}] no live session (${e.message}) — authenticating fresh`);
@@ -672,7 +686,15 @@ async function runProfile(p) {
     const resumeDone = !wantResume || !!resumeFile;
     if (titleDone && resumeDone) {
       p.lastRun = new Date().toISOString();
-      profiles.saveRegistry(reg);
+      // Keep-alive: persist any cookies Naukri rotated during this run so
+      // the saved session stays fresh and rarely needs a fresh (MFA) login.
+      try {
+        if (bearer && ctx.jar && ctx.jar.size) saveSession(p, ctx.jar, bearer);
+        else profiles.saveRegistry(reg);
+      } catch {
+        profiles.saveRegistry(reg);
+      }
+      if (reusedSession) log(`[${p.name}] session refreshed and re-saved (login still skipped next run)`);
 
       if (p.notify && p.notify.type !== "off") {
         try {
@@ -843,8 +865,9 @@ function isQuotaErrorText(t) {
 }
 
 // Run once via the queue, then re-plan (success) or back off (failure).
-// Quota/rate-limit failures wait for the next slot — retrying hourly would
-// burn the login budget forever.
+// Quota/rate-limit AND session/MFA failures wait for the next slot —
+// retrying password login hourly would re-trigger MFA (or lock the account)
+// forever. Manual refresh via Test login / cookies fixes it sooner.
 function cycleProfile(id) {
   return enqueueProfileRun(id).then((ok) => {
     const p = profiles.getProfile(reg, id);
@@ -852,10 +875,13 @@ function cycleProfile(id) {
     if (ok) {
       const t = planNext(p);
       scheduleProfile(p, Math.max(1000, t - Date.now()), "slot");
-    } else if (isQuotaErrorText(p.lastStatus) && ((p.schedule && p.schedule.mode) || "interval") !== "interval") {
+    } else if (
+      (isQuotaErrorText(p.lastStatus) || isAuthError(p.lastStatus)) &&
+      ((p.schedule && p.schedule.mode) || "interval") !== "interval"
+    ) {
       const t = nextSlotFuture(p, Date.now());
       scheduleProfile(p, Math.max(60000, t - Date.now()), "slot");
-    } else if (isQuotaErrorText(p.lastStatus)) {
+    } else if (isQuotaErrorText(p.lastStatus) || isAuthError(p.lastStatus)) {
       scheduleProfile(p, 12 * 60 * 60 * 1000, "retry");
     } else {
       scheduleProfile(p, 60 * 60 * 1000, "retry");
@@ -955,6 +981,32 @@ function sendJson(res, status, obj) {
 // the login screen — no profiles, no status, no actions.
 const sessions = new Map(); // token -> expiresAt
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+
+// Verified OTP sessions waiting for "Add profile" (add-form flow has no
+// profile id yet). Key: lowercased email -> { jar: {k:v}, bearer, profileId, expiresAt }.
+// TTL 15 min. Consumed once by POST /api/profiles so the first update reuses
+// the verified session instead of hitting password login (MFA) again.
+const pendingOtpSessions = new Map();
+const PENDING_OTP_TTL_MS = 15 * 60 * 1000;
+
+function peekPendingOtp(email) {
+  const k = String(email || "").trim().toLowerCase();
+  if (!k) return null;
+  const v = pendingOtpSessions.get(k);
+  if (!v) return null;
+  if (v.expiresAt <= Date.now()) {
+    pendingOtpSessions.delete(k);
+    return null;
+  }
+  return v;
+}
+
+function takePendingOtp(email) {
+  const v = peekPendingOtp(email);
+  if (!v) return null;
+  pendingOtpSessions.delete(String(email || "").trim().toLowerCase());
+  return v;
+}
 
 function sweepSessions() {
   const now = Date.now();
@@ -1152,6 +1204,48 @@ const server = http.createServer(async (req, res) => {
         }
         // NOTE: profiles.js works in plaintext; seal AFTER validation + cookie verify.
         let auth = body.auth || { method: "password", email: body.email, password: body.loginPassword };
+        // Validate auth shape first (throws friendly errors, creates nothing).
+        const preAuth = profiles.buildAuth(auth);
+        // Password adds: live-test BEFORE creating, so MFA accounts can't
+        // create a profile that fails every background run. A verified OTP
+        // session from the add form counts as the live test.
+        let liveSession = null; // { jar: Map, bearer }
+        let usedPendingEmail = null;
+        if (preAuth.method === "password") {
+          const pending = peekPendingOtp(preAuth.email);
+          if (pending) {
+            const jar = createJar();
+            for (const [k, v] of Object.entries(pending.jar || {})) {
+              if (v) jar.set(k, v);
+            }
+            liveSession = { jar, bearer: pending.bearer };
+            usedPendingEmail = preAuth.email;
+            log(`[${preAuth.email}] using OTP-verified session from add form (no fresh login)`);
+          } else {
+            let r;
+            try {
+              r = await testCredsLogin(preAuth.email, preAuth.password);
+            } catch (e) {
+              sendJson(res, 400, { ok: false, error: "Login test failed: " + e.message });
+              return;
+            }
+            if (r.status === "otp") {
+              const where = r.maskedEmail ? ` (code goes to ${r.medium || "your"} ${r.maskedEmail})` : "";
+              sendJson(res, 400, {
+                ok: false,
+                needOtp: true,
+                mfa: !!r.mfa,
+                flowId: r.flowId || "",
+                medium: r.medium || "",
+                error:
+                  "This account needs a verification code for every fresh password login" + where +
+                  " — background updates cannot fill codes. Verify the code in the form above (then press Add profile again — the verified session is reused), or add with session cookies / Login via Browser instead.",
+              });
+              return;
+            }
+            liveSession = { jar: r.jar, bearer: r.bearer };
+          }
+        }
         const p = profiles.addProfile(reg, {
           name: body.name,
           auth,
@@ -1177,6 +1271,17 @@ const server = http.createServer(async (req, res) => {
         }
         log(`[${p.name}] profile added (${profiles.readProfileTitles(p).length} titles)`);
         p.auth = sealAuth(p.auth);
+        // Attach the live/verified password session so the first update
+        // reuses it (login skipped, no second MFA challenge).
+        if (liveSession) {
+          try {
+            saveSession(p, liveSession.jar, liveSession.bearer);
+            if (usedPendingEmail) takePendingOtp(usedPendingEmail); // consume only on success
+            log(`[${p.name}] password session saved at add-time (future runs skip login)`);
+          } catch (e) {
+            log(`[${p.name}] could not save add-time session: ${e.message}`);
+          }
+        }
         profiles.saveRegistry(reg);
         bootProfile(p); // first run starts now
         sendJson(res, 200, { ok: true, profile: publicProfile(p) });
@@ -1409,6 +1514,18 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         const vr = await naukriVerifyOtp(body.email, body.otp, body.via === "email" ? "email" : "mobile", body.flowId);
+        // Stash the verified session so "Add profile" reuses it instead of
+        // doing a fresh password login (which would ask for MFA again).
+        try {
+          const jarObj = {};
+          for (const [k, v] of vr.jar.entries()) jarObj[k] = v;
+          pendingOtpSessions.set(String(body.email).trim().toLowerCase(), {
+            jar: jarObj,
+            bearer: vr.bearer,
+            profileId: vr.profileId,
+            expiresAt: Date.now() + PENDING_OTP_TTL_MS,
+          });
+        } catch {}
         sendJson(res, 200, { ok: true, profileId: vr.profileId, message: "Able to login" });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e.message });
@@ -1720,6 +1837,32 @@ server.listen(PORT, async () => {
     })();
     return;
   }
+  // Session keep-alive: every 6h, lightly probe each idle profile's saved
+  // session (dashboard call only, no headline/resume write). Alive sessions
+  // get re-saved with fresh cookies + savedAt, so Naukri sees activity and
+  // the session rarely expires (no repeat MFA). Dead ones are left alone —
+  // the next real run surfaces the expiry + WhatsApp alert.
+  setInterval(
+    async () => {
+      for (const p of reg.profiles) {
+        try {
+          if (running[p.id]) continue;
+          const s = openSession(p);
+          if (!s.bearer) continue;
+          const jar = createJar();
+          for (const [k, v] of Object.entries(s.cookies || {})) {
+            if (v) jar.set(k, v);
+          }
+          await fetchProfileId({ jar }, s.bearer);
+          saveSession(p, jar, s.bearer);
+          log(`[${p.name}] keep-alive ping OK (session still live, re-saved)`);
+        } catch (e) {
+          log(`[${p.name}] keep-alive ping: session not refreshable (${(e && e.message) || e})`);
+        }
+      }
+    },
+    6 * 60 * 60 * 1000
+  );
   if (reg.profiles.length === 0) {
     log("No profiles yet — open the dashboard at / and add your first Naukri profile");
     return;
