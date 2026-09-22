@@ -241,20 +241,44 @@ async function requestPairingCode(phone) {
   return { code, phone: digits };
 }
 
-function buildUpdateMessage(candidateName, headline, resumeFile, template) {
+// Format "now" in the user's timezone (settings.timezone, e.g.
+// Asia/Kolkata) — NOT the server clock, which on Render is UTC/US.
+function formatNow(timezone) {
+  try {
+    return new Intl.DateTimeFormat("en-IN", {
+      timeZone: timezone || "Asia/Kolkata",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(new Date());
+  } catch {
+    return new Date().toLocaleString();
+  }
+}
+
+function buildUpdateMessage(candidateName, headline, resumeFile, template, timezone) {
   const t = (template || "").trim();
+  const now = formatNow(timezone);
   if (t) {
     return t
       .replaceAll("{name}", candidateName)
       .replaceAll("{headline}", headline)
       .replaceAll("{resume}", resumeFile)
-      .replaceAll("{time}", new Date().toLocaleString());
+      .replaceAll("{time}", now);
   }
   return (
-    `Hi Boss,\n` +
-    `Profile Headline & Resume updated for ${candidateName}.\n` +
-    `Headline: ${headline}\n` +
-    `Resume: ${resumeFile}`
+    `✨ Profile Updated Successfully! ✨\n` +
+    `\n` +
+    `Hey there! The details for ${candidateName} ${now}.\n` +
+    `\n` +
+    `💼 Headline:\n` +
+    `${headline}\n` +
+    `\n` +
+    `📂 Resume Name:\n` +
+    `${resumeFile}`
   );
 }
 

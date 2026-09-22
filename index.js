@@ -719,7 +719,7 @@ async function runProfile(p) {
 
       if (p.notify && p.notify.type !== "off") {
         try {
-          const text = wa.buildUpdateMessage(p.name, headlineText, resumeFile, p.notify.customMsg);
+          const text = wa.buildUpdateMessage(p.name, headlineText, resumeFile, p.notify.customMsg, settings.timezone);
           let wr;
           if (p.notify.type === "group") wr = await wa.sendGroupMessage(text, p.notify.group);
           else wr = await wa.sendPersonalMessage(text, p.notify.phone);
