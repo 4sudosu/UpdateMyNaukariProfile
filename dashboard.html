@@ -190,7 +190,7 @@
         </div>
       </details>
     </div>
-    <div class="muted">Login is saved as session cookies — no passwords are stored.</div>
+    <div class="muted">Login happens when you press Add profile — if Naukri asks for MFA, enter the code and press Add again. The session is then saved and reused, no MFA again until it expires.</div>
   <div class="row">
     <div><label>Resume PDF (verified .pdf → <span class="mono">Name_Resume.pdf</span>)</label><input id="fResume" type="file" accept=".pdf,application/pdf"></div>
       <div><label>Titles .txt (one per line → <span class="mono">Name_Titles.txt</span>)</label><input id="fTitles" type="file" accept=".txt,text/plain"></div>
@@ -352,7 +352,7 @@ async function api(method, url, body){
   const j = await r.json().catch(()=>({}));
   if(r.status === 401 && j.error === "Login required."){ showLogin("Session expired — please log in again."); throw new Error("Login required."); }
   if(r.status === 423){ showLogin(j.error || "Locked."); throw new Error(j.error || "Locked"); }
-  if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+  if(!r.ok){ const e = new Error(j.error || ("HTTP "+r.status)); e.details = j; throw e; }
   return j;
 }
 /* ---------- login gate ---------- */
@@ -597,7 +597,7 @@ async function refresh(){
 }
 /* ---------- actions (session token rides along automatically) ---------- */
 async function addProfile(){
-  const msg = document.getElementById("addMsg"); msg.className="msg"; msg.textContent="Adding…";
+  const msg = document.getElementById("addMsg"); msg.className="msg"; msg.textContent="Logging in and adding…";
   try{
     if(!document.getElementById("fTaskTitle").checked && !document.getElementById("fTaskResume").checked){ msg.className="msg err"; msg.textContent="Select at least one task: Title and/or Resume."; return; }
     const rf = document.getElementById("fResume").files[0];
@@ -614,6 +614,15 @@ async function addProfile(){
       body.auth = { method: "password",
         email: document.getElementById("fEmail").value.trim(),
         password: document.getElementById("fPass").value };
+      // Inline MFA: if the code box is visible and filled, send it with Add
+      // so the server verifies the code and creates the profile in one step.
+      const otpEl = document.getElementById("fOtp");
+      const otpVal = otpEl ? otpEl.value.trim() : "";
+      if(otpVal && document.getElementById("fOtpWrap").style.display !== "none"){
+        body.otp = otpVal;
+        body.via = document.getElementById("fOtpVia").value;
+        body.flowId = window._otpFlow || "";
+      }
     } else {
       body.auth = { method: "cookies",
         cookieText: document.getElementById("fCookieText").value,
@@ -628,13 +637,27 @@ async function addProfile(){
       body.titlesText = await fileAsText(tf); body.titlesName = tf.name;
     }
     const j = await api("POST","/api/profiles",body);
-    msg.className="msg ok"; msg.textContent="Added "+j.profile.name+" — first update started.";
+    msg.className="msg ok"; msg.textContent="Added "+j.profile.name+" — logged in, session saved, first update started. No more MFA until the session expires.";
+    document.getElementById("fOtpWrap").style.display = "none";
+    const otpEl2 = document.getElementById("fOtp"); if(otpEl2) otpEl2.value = "";
+    window._otpFlow = ""; window._otpMfa = false;
     ["fName","fEmail","fPass","fTitlesText","fCookieText","fCk1","fCk2","fCk3","fCustomMsg"].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=""; });
     document.getElementById("fAuth").value = "password"; toggleAddAuth();
     document.getElementById("fTaskTitle").checked = true; document.getElementById("fTaskResume").checked = true;
     document.getElementById("fResume").value=""; document.getElementById("fTitles").value="";
     lastSig = ""; refresh();
-  }catch(e){ msg.className="msg err"; msg.textContent="Error: "+e.message; }
+  }catch(e){
+    const d = e.details || {};
+    if(d.needOtp){
+      window._otpFlow = d.flowId || "";
+      window._otpMfa = !!d.mfa;
+      if(d.medium && document.getElementById("fOtpVia")) document.getElementById("fOtpVia").value = d.medium === "email" ? "email" : "mobile";
+      document.getElementById("fOtpWrap").style.display = "block";
+      msg.className="msg"; msg.textContent=(e.message||"MFA required")+" If no code arrived, press Send code above, then enter it and press Add profile again.";
+      return;
+    }
+    msg.className="msg err"; msg.textContent="Error: "+e.message;
+  }
 }
 async function runNow(id){
   const m = document.getElementById("m-"+id); m.textContent="Started…";

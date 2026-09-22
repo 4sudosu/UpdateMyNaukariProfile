@@ -1206,9 +1206,12 @@ const server = http.createServer(async (req, res) => {
         let auth = body.auth || { method: "password", email: body.email, password: body.loginPassword };
         // Validate auth shape first (throws friendly errors, creates nothing).
         const preAuth = profiles.buildAuth(auth);
-        // Password adds: live-test BEFORE creating, so MFA accounts can't
-        // create a profile that fails every background run. A verified OTP
-        // session from the add form counts as the live test.
+        // Password adds: login-and-add in one step. A verified OTP
+        // session from the add form (Test creds) counts as the login.
+        // Otherwise we log in live here; if Naukri demands MFA and the
+        // request already carries { otp, via, flowId }, we verify the code
+        // inline and create the profile with the session saved — no
+        // separate "Test creds" step needed.
         let liveSession = null; // { jar: Map, bearer }
         let usedPendingEmail = null;
         if (preAuth.method === "password") {
@@ -1221,6 +1224,18 @@ const server = http.createServer(async (req, res) => {
             liveSession = { jar, bearer: pending.bearer };
             usedPendingEmail = preAuth.email;
             log(`[${preAuth.email}] using OTP-verified session from add form (no fresh login)`);
+          } else if (body.otp && String(body.otp).trim()) {
+            // Second Add press: user entered the MFA code shown after the
+            // first Add returned needOtp. Verify inline, then create.
+            const via = body.via === "email" ? "email" : "mobile";
+            try {
+              const vr = await naukriVerifyOtp(preAuth.email, String(body.otp).trim(), via, body.flowId || "");
+              liveSession = { jar: vr.jar, bearer: vr.bearer };
+              log(`[${preAuth.email}] MFA code accepted inline — creating profile with session saved`);
+            } catch (e) {
+              sendJson(res, 400, { ok: false, error: "Code rejected: " + e.message + " — re-check the code and press Add profile again." });
+              return;
+            }
           } else {
             let r;
             try {
@@ -1238,8 +1253,8 @@ const server = http.createServer(async (req, res) => {
                 flowId: r.flowId || "",
                 medium: r.medium || "",
                 error:
-                  "This account needs a verification code for every fresh password login" + where +
-                  " — background updates cannot fill codes. Verify the code in the form above (then press Add profile again — the verified session is reused), or add with session cookies / Login via Browser instead.",
+                  "MFA required" + where +
+                  " — enter the code below and press Add profile again (the login completes and the profile is created with the session saved).",
               });
               return;
             }
