@@ -382,6 +382,27 @@ async function fetchProfileId(ctx, bearer) {
   return pid;
 }
 
+// Website touch: GET the Naukri homepage carrying the saved cookies with a
+// real desktop UA, exactly like an open browser tab. Never throws — captures
+// any rotated Set-Cookie headers into the jar so the session stays warm.
+async function touchWebsite(jar) {
+  try {
+    const res = await fetch("https://www.naukri.com/", {
+      headers: {
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "accept-language": "en-US,en;q=0.9",
+        Cookie: cookieHeader(jar),
+        referer: "https://www.naukri.com/",
+        "user-agent": UA,
+      },
+    });
+    storeCookies(jar, getSetCookies(res));
+    await res.arrayBuffer().catch(() => null); // drain so the socket closes cleanly
+  } catch {
+    // offline / blocked now — the dashboard probe right after decides
+  }
+}
+
 async function updateHeadline(ctx, bearer, profileId, headline) {
   const res = await fetch(PROFILE_UPDATE_URL, {
     method: "POST",
@@ -1852,32 +1873,41 @@ server.listen(PORT, async () => {
     })();
     return;
   }
-  // Session keep-alive: every 6h, lightly probe each idle profile's saved
-  // session (dashboard call only, no headline/resume write). Alive sessions
-  // get re-saved with fresh cookies + savedAt, so Naukri sees activity and
-  // the session rarely expires (no repeat MFA). Dead ones are left alone —
-  // the next real run surfaces the expiry + WhatsApp alert.
-  setInterval(
-    async () => {
-      for (const p of reg.profiles) {
-        try {
-          if (running[p.id]) continue;
-          const s = openSession(p);
-          if (!s.bearer) continue;
-          const jar = createJar();
-          for (const [k, v] of Object.entries(s.cookies || {})) {
-            if (v) jar.set(k, v);
-          }
-          await fetchProfileId({ jar }, s.bearer);
-          saveSession(p, jar, s.bearer);
-          log(`[${p.name}] keep-alive ping OK (session still live, re-saved)`);
-        } catch (e) {
-          log(`[${p.name}] keep-alive ping: session not refreshable (${(e && e.message) || e})`);
+  // Session keep-alive: every 90min, visit Naukri like the website does for
+  // each idle profile (homepage touch + dashboard probe, no headline/resume
+  // write). Any cookies Naukri rotates are captured and re-saved, so the
+  // server session stays warm exactly like a logged-in browser tab and
+  // rarely expires (no repeat MFA). Dead sessions are left alone — the next
+  // real run surfaces the expiry + WhatsApp alert. Saves (disk + cloud
+  // backup) happen only when cookies actually changed.
+  const KEEP_ALIVE_MS = 90 * 60 * 1000;
+  async function keepAliveOnce() {
+    for (const p of reg.profiles) {
+      try {
+        if (running[p.id]) continue;
+        const s = openSession(p);
+        if (!s.bearer) continue;
+        const jar = createJar();
+        for (const [k, v] of Object.entries(s.cookies || {})) {
+          if (v) jar.set(k, v);
         }
+        const before = JSON.stringify([...jar.entries()].sort());
+        await touchWebsite(jar); // homepage visit with cookies, like a browser tab
+        await fetchProfileId({ jar }, s.bearer); // dashboard probe, captures rotations
+        const after = JSON.stringify([...jar.entries()].sort());
+        if (after !== before) {
+          saveSession(p, jar, s.bearer);
+          log(`[${p.name}] keep-alive OK (website visit, fresh cookies re-saved)`);
+        } else {
+          log(`[${p.name}] keep-alive OK (website visit, session still live)`);
+        }
+      } catch (e) {
+        log(`[${p.name}] keep-alive: session not refreshable (${(e && e.message) || e})`);
       }
-    },
-    6 * 60 * 60 * 1000
-  );
+    }
+  }
+  setTimeout(() => keepAliveOnce().catch(() => {}), 5 * 60 * 1000); // first ping 5min after boot
+  setInterval(() => keepAliveOnce().catch(() => {}), KEEP_ALIVE_MS);
   if (reg.profiles.length === 0) {
     log("No profiles yet — open the dashboard at / and add your first Naukri profile");
     return;
