@@ -1129,6 +1129,10 @@ function publicProfile(p) {
   };
 }
 
+let APP_VERSION = "2.1.0";
+try {
+  APP_VERSION = require("./package.json").version || APP_VERSION;
+} catch {}
 const DASHBOARD_FILE = path.join(__dirname, "dashboard.html");
 
 // ---------- HTTP server (also keeps Render free Web Service alive) ----------
@@ -1139,6 +1143,13 @@ const server = http.createServer(async (req, res) => {
   if (url === "/health") {
     const runningCount = Object.values(running).filter(Boolean).length;
     sendJson(res, 200, { ok: true, profiles: reg.profiles.length, running: runningCount, wa: wa.getStatus() });
+    return;
+  }
+
+  // Public running-build version (shown as a badge on the dashboard, even on
+  // the login screen). Single source of truth: package.json version.
+  if (url === "/api/version" && req.method === "GET") {
+    sendJson(res, 200, { ok: true, version: APP_VERSION });
     return;
   }
 

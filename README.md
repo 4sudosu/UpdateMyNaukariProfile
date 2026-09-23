@@ -25,6 +25,24 @@ Keep your **Naukri.com** profile fresh on autopilot — rotating **Resume Headli
 
 ---
 
+## 🆕 What's new (V2.1 — current build)
+
+- 🖥️ **Server browser login on Render** — headless Chromium logs in with email + password, OTP code entered in the dashboard. No cookie-pasting needed to get started.
+- 🗂️ **Persistent multi-tab browser** — one isolated tab per profile, all stay open side by side; adding a profile opens a new tab without disturbing the others.
+- ✅ **Test-login is check-only** — it only reports connected / not from the live tab or saved session. It never performs a fresh login, so it can never trigger an MFA code.
+- ⏰ **Hourly keep-alive (60 min)** — cookies auto-refresh every hour so sessions stay warm; a code is only ever asked for a genuinely fresh login.
+- 🔖 **Running-build badge** — the dashboard topbar and login screen show the deployed version (served by `GET /api/version`, single source of truth: `package.json`).
+
+## 📦 Version history
+
+| Version | Build | Notes |
+|---|---|---|
+| **V2.1** | current | Tab farm, check-only Test-login, hourly keep-alive, version badge |
+| **V2.0** | | Headless server login on Render (`@sparticuz/chromium`), dashboard OTP |
+| **V1.0** | old build | API updates, cookie-paste login, visible-window browser login, 90-min keep-alive |
+
+---
+
 ## 🚀 Deploy to Render (1 click)
 
 1. Click **Deploy to Render** above (uses the included `render.yaml` blueprint).

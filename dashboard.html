@@ -120,6 +120,7 @@
     <button onclick="login()">Unlock dashboard</button>
     <button class="linklike" onclick="clearCacheReload()">Clear cache &amp; reload</button>
     <div id="loginMsg"></div>
+    <div class="muted" id="loginVer" style="margin-top:10px;color:#c4b5fd">v…</div>
   </div>
 </div>
 
@@ -127,6 +128,7 @@
   <div class="topbar">
     <h1>Naukri Dashboard</h1>
     <span class="pill indigo" id="profCount">0 profiles</span>
+    <span class="pill green" id="verPill" title="Running server build">v…</span>
     <span class="spacer"></span>
     <span id="clock"></span>
     <span class="muted" id="serverClock" title="Schedules use server time"></span>
@@ -456,8 +458,19 @@ function waPill(wa){
   if(wa.qrPending) return '<span class="pill amber">scan QR below</span>';
   return '<span class="pill indigo">linking…</span>';
 }
+/* ---------- running build version (public, works on login screen too) ---------- */
+async function fetchVersion(){
+  try{
+    const r = await fetch("/api/version");
+    const j = await r.json();
+    const v = "v" + (j.version || "?");
+    const pill = document.getElementById("verPill"); if(pill) pill.textContent = v;
+    const lv = document.getElementById("loginVer"); if(lv) lv.textContent = v + " — running build";
+  }catch(e){}
+}
 /* ---------- data ---------- */
 async function refresh(){
+  fetchVersion();
   try{
     const j = await api("GET","/api/status");
     if(document.getElementById("app").style.display === "none") hideLogin();
@@ -1157,6 +1170,7 @@ async function browserLoginRefresh(id){
 buildSwatches();
 applyTheme(currentTheme(), false);
 toggleAddAuth(); // email+pass is default
+fetchVersion();
 if(token()){ refresh(); } else { showLogin(); }
 setInterval(refresh,10000); setInterval(tick,1000);
 </script>

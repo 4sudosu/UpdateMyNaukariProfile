@@ -1,6 +1,6 @@
 {
   "name": "naukri-multi-profile-rotator",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Multi-profile Naukri headline + resume rotator with dashboard and free WhatsApp alerts.",
   "main": "index.js",
   "type": "commonjs",
