@@ -1994,14 +1994,14 @@ server.listen(PORT, async () => {
     })();
     return;
   }
-  // Session keep-alive: every 90min, visit Naukri like the website does for
+  // Session keep-alive: every 60min, visit Naukri like the website does for
   // each idle profile (homepage touch + dashboard probe, no headline/resume
   // write). Any cookies Naukri rotates are captured and re-saved, so the
   // server session stays warm exactly like a logged-in browser tab and
   // rarely expires (no repeat MFA). Dead sessions are left alone — the next
   // real run surfaces the expiry + WhatsApp alert. Saves (disk + cloud
   // backup) happen only when cookies actually changed.
-  const KEEP_ALIVE_MS = 90 * 60 * 1000;
+  const KEEP_ALIVE_MS = 60 * 60 * 1000;
   async function keepAliveOnce() {
     for (const p of reg.profiles) {
       try {
