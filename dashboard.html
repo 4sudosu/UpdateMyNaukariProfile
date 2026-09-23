@@ -840,8 +840,10 @@ let browserTimer = null;
 async function browserBegin(profileId, profileName, onDone, onFail, msgEl, opts){
   opts = opts || {};
   try{
-    if(!opts.quiet) msgEl.textContent = "Opening Chrome — log in to Naukri inside that window…";
-    await api("POST","/api/browser/start",Object.assign({profileId, profileName}, opts.body || {}));
+    const creds = (opts.body && opts.body.email && opts.body.password) ? { email: opts.body.email, password: opts.body.password } : null;
+    const endpoint = creds ? "/api/browser/headless-start" : "/api/browser/start";
+    if(!opts.quiet) msgEl.textContent = creds ? "Starting server browser login…" : "Opening Chrome — log in to Naukri inside that window…";
+    await api("POST", endpoint, Object.assign({profileId, profileName}, creds || {}));
     window._onBrowserDone = onDone; window._onBrowserFail = onFail; window._browserMsgEl = msgEl;
     if(browserTimer) clearInterval(browserTimer);
     browserTimer = setInterval(browserPoll, 2500);

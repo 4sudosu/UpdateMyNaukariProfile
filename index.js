@@ -1721,6 +1721,32 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // POST /api/browser/headless-start — server-side browser login (Render/cloud:
+    // no screen, no pasted cookies). Dashboard sends email+password (used once,
+    // never stored); headless Chromium submits the Naukri form. If Naukri asks
+    // for a code, POST it to /api/browser/otp. Poll /api/browser/status.
+    if (url === "/api/browser/headless-start" && req.method === "POST") {
+      try {
+        await bl.startHeadlessLogin(body.profileId, body.profileName, body.email, body.password);
+        sendJson(res, 200, { ok: true, started: true, mode: "headless", hint: "Server browser submitted the login — watch status; enter the code via /api/browser/otp if asked" });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    // POST /api/browser/otp — submit the Naukri verification code for the
+    // in-progress headless login ({ code }).
+    if (url === "/api/browser/otp" && req.method === "POST") {
+      try {
+        const r = await bl.submitOtp(body.code);
+        sendJson(res, 200, { ok: true, ...r });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
     // POST /api/browser/cancel — close the login window
     if (url === "/api/browser/cancel" && req.method === "POST") {
       await bl.cancelBrowserLogin();
