@@ -748,7 +748,7 @@ async function testLogin(id){
       m.textContent = j.message || "Verification code needed — enter it below.";
       return;
     }
-    m.textContent="Login works ("+j.method+", Naukri profile "+j.profileId+"). Session saved — future updates skip login."; lastSig=""; refresh();
+    m.textContent="Login works ("+(j.method==="browser-tab"?"browser tab live — stays open":j.method)+", Naukri profile "+j.profileId+"). Session saved — future updates skip login."; lastSig=""; refresh();
   }catch(e){ m.textContent="Error: "+e.message; }
 }
 async function testNotify(id){
@@ -762,6 +762,15 @@ async function verifyCardOtp(id){
   const m = document.getElementById("m-"+id);
   const code = document.getElementById("av-"+id).value.trim();
   if(!code){ m.textContent="Enter the code first."; return; }
+  if(window._cardOtpTab === id){
+    m.textContent="Submitting code to the browser tab…";
+    try{
+      await api("POST","/api/browser/tab/otp",{profileId:id, code});
+      document.getElementById("av-"+id).value = "";
+      m.textContent="Code submitted — watching tab…";
+    }catch(e){ m.textContent="Error: "+e.message; }
+    return;
+  }
   m.textContent="Verifying code…";
   try{
     await api("POST","/api/profiles/"+id+"/verify-otp",{otp:code});
@@ -1085,10 +1094,42 @@ async function clearAllSessions() {
     msg.className = "msg err"; msg.textContent = "Error: " + e.message;
   }
 }
-function browserLoginRefresh(id){
+let tabRefreshTimer = null;
+async function tabRefreshPoll(id){
   const m = document.getElementById("m-"+id);
-  m.textContent = "Opening login window…";
-  browserBegin(id, "profile",
+  try{
+    const s = await api("GET","/api/browser/tabs");
+    const tab = (s.farm.tabs || []).find(t=>t.profileId===id);
+    if(!tab){ if(tabRefreshTimer){clearInterval(tabRefreshTimer);tabRefreshTimer=null;} window._cardOtpTab=null; return; }
+    if(tab.status === "otp"){
+      window._cardOtpTab = id;
+      document.getElementById("ao-"+id).style.display = "block";
+      m.textContent = "Naukri asks for a verification code — enter it below (tab stays open).";
+    } else if(tab.live || tab.status === "done"){
+      if(tabRefreshTimer){clearInterval(tabRefreshTimer);tabRefreshTimer=null;}
+      window._cardOtpTab = null;
+      document.getElementById("ao-"+id).style.display = "none";
+      try{
+        const c = await api("POST","/api/browser/tab/claim",{profileId:id});
+        m.textContent = "Browser tab live (Naukri profile "+c.profileId+") — saved, tab stays open for all profiles."; lastSig=""; refresh();
+      }catch(e){ m.textContent = "Tab live but save failed: "+e.message; }
+    } else if(tab.status === "timeout" || tab.status === "closed" || tab.status === "error"){
+      if(tabRefreshTimer){clearInterval(tabRefreshTimer);tabRefreshTimer=null;}
+      window._cardOtpTab = null;
+      document.getElementById("ao-"+id).style.display = "none";
+      m.textContent = "Browser tab stopped: "+(tab.error || tab.status);
+    } else {
+      m.textContent = "Browser tab working… ("+tab.status+") — other tabs stay open.";
+    }
+  }catch(e){ if(tabRefreshTimer){clearInterval(tabRefreshTimer);tabRefreshTimer=null;} }
+}
+async function browserLoginRefresh(id){
+  const m = document.getElementById("m-"+id);
+  let headed = false;
+  try{ const s = await api("GET","/api/browser/status"); headed = !!(s.browser && s.browser.headed); }catch(e){}
+  if(headed){
+    m.textContent = "Opening login window…";
+    browserBegin(id, "profile",
     async (cookies)=>{
       const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
       m.textContent = "Session captured ("+names.join(", ")+") — saving…";
@@ -1099,6 +1140,18 @@ function browserLoginRefresh(id){
     },
     (err)=>{ m.textContent = "Browser login failed: "+err; },
     m);
+    return;
+  }
+  // Server (Render): persistent tab — opens alongside other profiles' tabs,
+  // logs in with the profile's saved email+password, tab stays open.
+  m.textContent = "Opening persistent browser tab…";
+  document.getElementById("ao-"+id).style.display = "none";
+  window._cardOtpTab = null;
+  try{
+    await api("POST","/api/browser/tab/login",{profileId:id});
+    if(tabRefreshTimer) clearInterval(tabRefreshTimer);
+    tabRefreshTimer = setInterval(()=>tabRefreshPoll(id), 2500);
+  }catch(e){ m.textContent = "Error: "+e.message; }
 }
 /* ---------- boot: nothing visible without login ---------- */
 buildSwatches();

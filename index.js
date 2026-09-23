@@ -1431,7 +1431,9 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // POST /api/profiles/:id/test-login — live Naukri credential check, changes nothing
+    // POST /api/profiles/:id/test-login — session liveness check ONLY.
+    // Reads the profile's persistent browser tab / saved session — it never
+    // POSTs a password to Naukri, so it can never trigger an MFA/OTP code.
     if (parts[1] === "profiles" && parts[2] && parts[3] === "test-login" && req.method === "POST") {
       const p = profiles.getProfile(reg, parts[2]);
       if (!p) {
@@ -1439,6 +1441,29 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       try {
+        // 1) live browser tab (the Render browser) — cheapest, no MFA possible
+        try {
+          const t = await bl.checkProfileTab(p.id);
+          if (t.open && t.live && t.cookies && t.cookies.nauk_at) {
+            const jar = createJar();
+            for (const [k, v] of Object.entries(t.cookies)) {
+              if (v) jar.set(k, v);
+            }
+            const pid = await fetchProfileId({ jar }, t.cookies.nauk_at);
+            saveSession(p, jar, t.cookies.nauk_at);
+            sendJson(res, 200, { ok: true, method: "browser-tab", profileId: pid });
+            log(`[${p.name}] test login OK (browser tab live)`);
+            return;
+          }
+        } catch {}
+        // 2) saved session probe (no login POST, no MFA)
+        try {
+          const s = await trySavedSession(p);
+          sendJson(res, 200, { ok: true, method: "session", profileId: s.profileId });
+          log(`[${p.name}] test login OK (saved session live, tab not open)`);
+          return;
+        } catch {}
+        // 3) stored cookies (verified, no MFA possible)
         if (p.auth.method === "cookies") {
           const pid = await verifyCookiesAuth({ method: "cookies", cookies: openCookies(p.auth) });
           const jar = createJar();
@@ -1448,27 +1473,11 @@ const server = http.createServer(async (req, res) => {
           }
           saveSession(p, jar, ck.nauk_at);
           sendJson(res, 200, { ok: true, method: "cookies", profileId: pid });
-        } else {
-          const email = secretEmail(p);
-          const password = secretPass(p);
-          if (!email || !password) throw new Error("No email/password saved");
-          const r = await testCredsLogin(email, password);
-          if (r.status === "otp") {
-            const where = r.maskedEmail ? ` (code goes to ${r.medium || "your"} ${r.maskedEmail})` : "";
-            sendJson(res, 200, {
-              ok: false,
-              needOtp: true,
-              mfa: !!r.mfa,
-              flowId: r.flowId || "",
-              medium: r.medium || "",
-              message: "This account needs a verification code" + where + " — enter it below.",
-            });
-            return;
-          }
-          saveSession(p, r.jar, r.bearer);
-          sendJson(res, 200, { ok: true, method: "password", profileId: r.profileId });
+          log(`[${p.name}] test login OK`);
+          return;
         }
-        log(`[${p.name}] test login OK`);
+        // 4) nothing live — point at the browser tab, never a password POST
+        throw new Error("No live session — open the browser tab (Login via Browser) to log in. Test login only checks, it never asks Naukri for a fresh login so it can't trigger a code.");
       } catch (e) {
         sendJson(res, 400, { ok: false, error: "Login test failed: " + e.message });
       }
@@ -1747,6 +1756,83 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // POST /api/browser/tab/open — open (or reuse) this profile's persistent tab.
+    // The browser stays open; every profile keeps its own isolated tab + cookies.
+    if (url === "/api/browser/tab/open" && req.method === "POST") {
+      try {
+        const p = body.profileId ? profiles.getProfile(reg, body.profileId) : null;
+        const r = await bl.openProfileTab(body.profileId, p ? p.name : body.profileName);
+        sendJson(res, 200, { ok: true, ...r, farm: bl.getFarmStatus() });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    // POST /api/browser/tab/login — log the profile's persistent tab in.
+    // Creds: explicit { email, password } (used once, never stored) or the
+    // profile's saved email+password. The tab stays open afterwards.
+    if (url === "/api/browser/tab/login" && req.method === "POST") {
+      try {
+        const p = body.profileId ? profiles.getProfile(reg, body.profileId) : null;
+        let email = body.email || "";
+        let password = body.password || "";
+        if ((!email || !password) && p && p.auth.method === "password") {
+          email = secretEmail(p);
+          password = secretPass(p);
+        }
+        if (!email || !password) throw new Error("No login email/password — save email+password on the profile or pass them here (used once).");
+        const r = await bl.startTabLogin(body.profileId, p ? p.name : body.profileName, email, password);
+        sendJson(res, 200, { ok: true, ...r, farm: bl.getFarmStatus() });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    // POST /api/browser/tab/otp — submit the code into the profile's tab.
+    if (url === "/api/browser/tab/otp" && req.method === "POST") {
+      try {
+        const r = await bl.submitTabOtp(body.profileId, body.code);
+        sendJson(res, 200, { ok: true, ...r });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    // POST /api/browser/tab/close — close this profile's tab (browser stays open).
+    if (url === "/api/browser/tab/close" && req.method === "POST") {
+      try {
+        const r = await bl.closeProfileTab(body.profileId);
+        sendJson(res, 200, { ok: true, ...r, farm: bl.getFarmStatus() });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
+    // POST /api/browser/tab/claim — pull the live tab session into the profile
+    // (verified + saved, so updates reuse it). Called by the dashboard on done.
+    if (url === "/api/browser/tab/claim" && req.method === "POST") {
+      try {
+        const p = body.profileId ? profiles.getProfile(reg, body.profileId) : null;
+        if (!p) throw new Error("Profile not found");
+        const t = await bl.checkProfileTab(p.id);
+        if (!t.open) throw new Error("Tab is not open — open it first");
+        if (!t.live || !t.cookies || !t.cookies.nauk_at) throw new Error("Tab is open but not logged in yet");
+        const jar = createJar();
+        for (const [k, v] of Object.entries(t.cookies)) { if (v) jar.set(k, v); }
+        const pid = await fetchProfileId({ jar }, t.cookies.nauk_at);
+        saveSession(p, jar, t.cookies.nauk_at);
+        log(`[${p.name}] tab session claimed (verified live, browser tab stays open)`);
+        sendJson(res, 200, { ok: true, profileId: pid });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
     // POST /api/browser/cancel — close the login window
     if (url === "/api/browser/cancel" && req.method === "POST") {
       await bl.cancelBrowserLogin();
@@ -1809,6 +1895,15 @@ const server = http.createServer(async (req, res) => {
     }
 
     sendJson(res, 404, { ok: false, error: "Unknown endpoint" });
+    return;
+  }
+
+  if (url === "/api/browser/tabs" && req.method === "GET") {
+    if (!isAuthed(req, null)) {
+      sendJson(res, 401, { ok: false, error: "Login required." });
+      return;
+    }
+    sendJson(res, 200, { ok: true, farm: bl.getFarmStatus() });
     return;
   }
 

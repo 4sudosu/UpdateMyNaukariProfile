@@ -382,6 +382,225 @@ async function cancelBrowserLogin() {
   return { ok: true };
 }
 
+// ---------- Persistent farm: one browser, one isolated tab per profile ----------
+// The browser stays open; each profile gets its own incognito context (own tab,
+// own cookies) so many Naukri logins stay active side by side. Test-login only
+// READS these tabs — it never POSTs a password, so it never triggers MFA.
+let farm = null; // { browser, mode, startedAt }
+
+const farmTabs = new Map(); // profileId -> { profileId, profileName, context, page, status, cookies, error, startedAt }
+
+function farmMode() {
+  // Servers (Render: no screen) run headless; local machines get visible windows.
+  return headedCapable() ? "window" : "headless";
+}
+
+async function ensureFarmBrowser() {
+  if (farm && farm.browser) {
+    try {
+      if (farm.browser.connected) return farm;
+    } catch {}
+    try { await farm.browser.close().catch(() => {}); } catch {}
+    farm = null;
+  }
+  const puppeteer = needPuppeteer();
+  const mode = farmMode();
+  let browser;
+  if (mode === "headless") {
+    const { executablePath, args } = await resolveHeadless();
+    if (!fs.existsSync(HEADLESS_PROFILE_DIR)) fs.mkdirSync(HEADLESS_PROFILE_DIR, { recursive: true });
+    browser = await launchWithFallback(puppeteer, {
+      executablePath, headless: true, args, userDataDir: HEADLESS_PROFILE_DIR,
+    });
+  } else {
+    const exe = findChrome();
+    if (!exe) throw new Error("No visible browser on this machine.");
+    if (!fs.existsSync(BROWSER_PROFILE_DIR)) fs.mkdirSync(BROWSER_PROFILE_DIR, { recursive: true });
+    browser = await launchWithFallback(puppeteer, {
+      executablePath: exe, headless: false, defaultViewport: null,
+      args: ["--start-maximized"], userDataDir: BROWSER_PROFILE_DIR,
+    });
+  }
+  browser.on("disconnected", () => { farm = null; farmTabs.clear(); log("Farm browser closed — tabs cleared"); });
+  farm = { browser, mode, startedAt: Date.now() };
+  log(`Farm browser open (${mode}) — stays open, one tab per profile`);
+  return farm;
+}
+
+async function openProfileTab(profileId, profileName) {
+  if (!profileId) throw new Error("profileId is required");
+  const f = await ensureFarmBrowser();
+  let tab = farmTabs.get(String(profileId));
+  try {
+    if (tab && tab.page && !tab.page.isClosed()) {
+      await tab.page.bringToFront().catch(() => {});
+      return { opened: false, reused: true, mode: f.mode, status: tab.status };
+    }
+  } catch {}
+  if (tab) { try { await tab.context.close().catch(() => {}); } catch {} farmTabs.delete(String(profileId)); }
+  const context = await f.browser.createBrowserContext();
+  const page = await context.newPage();
+  if (f.mode === "headless") await page.setUserAgent(DESKTOP_UA);
+  tab = { profileId: String(profileId), profileName: profileName || "profile", context, page, status: "open", cookies: null, error: null, startedAt: Date.now() };
+  farmTabs.set(String(profileId), tab);
+  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
+  log(`Tab opened for "${tab.profileName}" (${f.mode}) — stays open alongside other profiles`);
+  return { opened: true, reused: false, mode: f.mode, status: tab.status };
+}
+
+async function readTabCookies(tab) {
+  try {
+    const cookies = await tab.page.cookies();
+    const map = {};
+    for (const c of cookies) map[c.name] = c.value;
+    if (!map.nauk_at) return null;
+    return { nauk_at: map.nauk_at || "", nauk_sid: map.nauk_sid || "", nauk_rt: map.nauk_rt || "" };
+  } catch {
+    return null;
+  }
+}
+
+function farmTabPoll(tab) {
+  const deadline = Date.now() + HEADLESS_TIMEOUT_MS;
+  const settledAt = Date.now();
+  (async () => {
+    while (farmTabs.get(tab.profileId) === tab && (tab.status === "waiting" || tab.status === "otp")) {
+      if (Date.now() > deadline) {
+        tab.status = "timeout";
+        tab.error = "Timed out — no Naukri session established in this tab.";
+        log(tab.error);
+        return;
+      }
+      let snap = null;
+      try {
+        const found = await readTabCookies(tab);
+        if (found) {
+          tab.cookies = found;
+          tab.status = "done";
+          log(`Tab session live for "${tab.profileName}" — tab stays open`);
+          return;
+        }
+        snap = await pageSnapshot(tab.page);
+      } catch {
+        tab.status = "closed";
+        tab.error = "Tab was closed before login completed";
+        log(tab.error);
+        return;
+      }
+      if (tab.status === "otp") { await new Promise((r) => setTimeout(r, 2000)); continue; }
+      if (looksOtpChallenge(snap)) {
+        tab.status = "otp";
+        tab.error = null;
+        log(`Naukri asks for a code in "${tab.profileName}" tab — waiting on dashboard`);
+        continue;
+      }
+      if (Date.now() - settledAt > 12000 && looksLoggedOutWithError(snap)) {
+        tab.status = "error";
+        tab.error = "Naukri rejected the login (wrong email/password, or account blocked).";
+        log(tab.error);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  })().catch(() => {});
+}
+
+// Log a persistent tab in with dashboard-supplied (or stored) creds — used once,
+// never stored. The tab stays open afterwards with the session live in it.
+async function startTabLogin(profileId, profileName, email, password) {
+  if (!email || !password) throw new Error("Email and password are required for tab login.");
+  const opened = await openProfileTab(profileId, profileName);
+  const tab = farmTabs.get(String(profileId));
+  if (!tab) throw new Error("Tab could not be opened.");
+  if (tab.status === "waiting" || tab.status === "otp" || tab.status === "filling") {
+    throw new Error(`Tab login already in progress for "${tab.profileName}"`);
+  }
+  tab.status = "filling";
+  tab.error = null;
+  try {
+    const page = tab.page;
+    await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
+    try { await page.click("button#cookieButton", { timeout: 2500 }); } catch {}
+    await typeInto(page, "#usernameField", email);
+    await typeInto(page, "#passwordField", password);
+    await Promise.all([
+      page.click('button[type="submit"]'),
+      page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {}),
+    ]);
+    tab.status = "waiting";
+    log(`Tab login submitted for "${tab.profileName}" — tab stays open`);
+    farmTabPoll(tab);
+    return { started: true, mode: (farm && farm.mode) || "headless", reused: opened.reused };
+  } catch (e) {
+    tab.status = "error";
+    tab.error = String((e && e.message) || e).split("\n")[0];
+    throw new Error(tab.error);
+  }
+}
+
+async function submitTabOtp(profileId, code) {
+  const tab = farmTabs.get(String(profileId));
+  if (!tab || tab.status !== "otp" || !tab.page) throw new Error("No OTP challenge pending in this profile's tab.");
+  const clean = String(code || "").trim();
+  if (!clean) throw new Error("Enter the code first.");
+  const page = tab.page;
+  const ok = await page.evaluate((idx) => {
+    const inputs = Array.from(document.querySelectorAll("input")).filter((i) => {
+      const t = (i.type || "").toLowerCase();
+      return (t === "" || t === "text" || t === "tel" || t === "number") && i.offsetParent !== null;
+    });
+    const el = (idx >= 0 && inputs[idx]) || inputs[inputs.length - 1] || inputs[0];
+    if (!el) return false;
+    el.id = "__otp_box";
+    return true;
+  }, pickCodeInput(await pageSnapshot(page)));
+  if (!ok) throw new Error("Could not find the code box in this tab.");
+  await typeInto(page, "#__otp_box", clean);
+  const clicked = await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll("button")).filter((b) => b.offsetParent !== null);
+    const rx = /verify|submit|continue|confirm|login|proceed/i;
+    const el = btns.find((b) => rx.test(b.innerText || "")) || btns[btns.length - 1];
+    if (!el) return false;
+    el.click();
+    return true;
+  });
+  if (!clicked) await page.keyboard.press("Enter").catch(() => {});
+  tab.status = "waiting";
+  log(`OTP submitted in "${tab.profileName}" tab — watching result (tab stays open)`);
+  farmTabPoll(tab);
+  return { submitted: true };
+}
+
+async function checkProfileTab(profileId) {
+  const tab = farmTabs.get(String(profileId));
+  if (!tab) return { open: false, live: false };
+  try {
+    if (!tab.page || tab.page.isClosed()) { farmTabs.delete(String(profileId)); return { open: false, live: false }; }
+  } catch { farmTabs.delete(String(profileId)); return { open: false, live: false }; }
+  const cookies = await readTabCookies(tab);
+  if (cookies) { tab.cookies = cookies; if (tab.status !== "otp") tab.status = "done"; }
+  let url = "";
+  try { url = tab.page.url(); } catch {}
+  return { open: true, live: !!cookies, status: tab.status, error: tab.error, cookies, url, profileName: tab.profileName };
+}
+
+async function closeProfileTab(profileId) {
+  const tab = farmTabs.get(String(profileId));
+  farmTabs.delete(String(profileId));
+  if (tab) { try { await tab.context.close().catch(() => {}); } catch {} }
+  return { ok: true };
+}
+
+function getFarmStatus() {
+  const tabs = [];
+  for (const [id, t] of farmTabs) {
+    let closed = true;
+    try { closed = !t.page || t.page.isClosed(); } catch {}
+    tabs.push({ profileId: id, profileName: t.profileName, status: closed ? "closed" : t.status, live: !!(t.cookies && t.cookies.nauk_at), error: t.error });
+  }
+  return { running: !!(farm && farm.browser), mode: farm ? farm.mode : farmMode(), headed: headedCapable(), tabs };
+}
+
 module.exports = {
   startBrowserLogin,
   startHeadlessLogin,
@@ -391,4 +610,10 @@ module.exports = {
   cancelBrowserLogin,
   findChrome,
   headedCapable,
+  openProfileTab,
+  startTabLogin,
+  submitTabOtp,
+  checkProfileTab,
+  closeProfileTab,
+  getFarmStatus,
 };
