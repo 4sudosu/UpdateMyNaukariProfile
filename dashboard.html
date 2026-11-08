@@ -142,15 +142,16 @@
     <div><label>Profile Name (= CandidateName for files)</label><input id="fName" type="text" placeholder="Sudhir" style="max-width:340px"></div>
     <div id="fPassWrap">
       <div class="row">
-        <div><label>Naukri login email (headless login)</label><input id="fEmail" type="email" placeholder="you@example.com" oninput="toggleTestCreds()"></div>
+        <div><label>Naukri login email</label><input id="fEmail" type="email" placeholder="you@example.com" oninput="toggleTestCreds()"></div>
         <div><label>Naukri password</label><input id="fPass" type="password" placeholder="••••••" oninput="toggleTestCreds()"></div>
       </div>
       <div class="row" id="fTestCredsWrap" style="display:none">
         <div><label>&nbsp;</label><button class="teal" onclick="testCreds()">Test creds</button></div>
+        <div><label>&nbsp;</label><button class="teal" onclick="browserLaunchNew()">Launch Chrome (manual login)</button></div>
         <div><label>&nbsp;</label><button class="ghost" onclick="clearAllSessions()">Clear all saved sessions</button></div>
       </div>
       <div id="fOtpWrap" style="display:none">
-        <div class="muted">This account needs 2-step verification — get the code and enter it below.</div>
+        <div class="muted">Account needs 2-step verification — get the code and enter it below, OR click "Launch Chrome" to log in manually in the VPS Chrome window (captcha OK).</div>
         <div class="row">
           <div><label>Send code to</label><select id="fOtpVia"><option value="mobile">Mobile (SMS)</option><option value="email">Email</option></select></div>
           <div><label>&nbsp;</label><button class="teal" onclick="sendOtpCode()">Send code</button></div>
@@ -160,8 +161,9 @@
           <div><label>&nbsp;</label><button onclick="verifyOtpCode()">Verify &amp; check login</button></div>
         </div>
       </div>
+      <div id="browserMsgH" class="msg"></div>
     </div>
-    <div class="muted">Headless login only — no cookie pasting. Login happens when you press Add profile — if Naukri asks for MFA, enter the code and press Add again. The session is then saved and reused, no MFA again until it expires.</div>
+    <div class="muted">If Naukri shows a captcha ("Login test failed … captcha"), don't fight the API — click <b>Launch Chrome</b> above, log in manually in the Chrome window on your VPS desktop, the session is auto-captured. Otherwise Add profile logs in headlessly and saves the session.</div>
   <div class="row">
     <div><label>Resume PDF (verified .pdf → <span class="mono">Name_Resume.pdf</span>)</label><input id="fResume" type="file" accept=".pdf,application/pdf"></div>
       <div><label>Titles .txt (one per line → <span class="mono">Name_Titles.txt</span>)</label><input id="fTitles" type="file" accept=".txt,text/plain"></div>
@@ -484,7 +486,7 @@ async function refresh(){
         + '<summary><div class="sum-head"><b style="font-size:16px">'+esc(p.name)+'</b> '+st+'<span class="sum-toggle">expand</span></div>'
         + '<div class="muted">'+esc(p.email)+'</div>'
         + '<div><span class="pill slate">Title '+(p.titleIndex+1)+' of '+p.titlesTotal+'</span> '
-        + '<span class="pill slate">email+pass (headless)</span> '
+        + '<span class="pill slate">email+pass (Chrome)</span> '
         + '<span class="pill '+(p.hasSession?"green":"slate")+'">'+(p.hasSession?"session saved":"no session")+'</span> '
         + '<span class="pill slate">'+(p.tasks.title&&p.tasks.resume?"title+resume":p.tasks.title?"title only":"resume only")+'</span> '
         + '<span class="pill indigo">'+esc(p.scheduleText||"Every ?h")+'</span> '
@@ -524,14 +526,14 @@ async function refresh(){
         + '<label>…or paste new titles (one per line)</label><textarea id="fx-'+p.id+'" class="mono" style="min-height:56px"></textarea>'
         + '<label>New resume PDF (replaces saved resume)</label><input id="fr-'+p.id+'" type="file" accept=".pdf,application/pdf">'
         + '<button class="ghost" onclick="saveFiles(\''+p.id+'\')">Save files</button></details>'
-        + '<details><summary class="muted">Refresh login (headless email+password)</summary>'
+        + '<details><summary class="muted">Refresh login (email+password / Chrome)</summary>'
         + '<div class="row"><div><label>Email</label><input id="ae-'+p.id+'" type="email"></div>'
         + '<div><label>Password</label><input id="aw-'+p.id+'" type="password"></div></div>'
-        + '<div class="muted">Headless login only — session is auto-captured by the server browser. Enter a code only if Naukri asks on the next run.</div>'
+        + '<div class="muted">Chrome login saves the session automatically — you type in the VPS Chrome window (captcha OK), nothing needed here.</div>'
         + '<div id="ao-'+p.id+'" style="display:none"><label>Enter the code Naukri sent</label><div class="row"><div><input id="av-'+p.id+'" type="text" inputmode="numeric" placeholder="6-digit code"></div>'
         + '<div><label>&nbsp;</label><button class="teal" onclick="verifyCardOtp(\''+p.id+'\')">Verify code</button></div></div></div>'
         + '<button class="ghost" onclick="saveAuth(\''+p.id+'\')">Save login</button> '
-        + '<button class="teal" onclick="browserLoginRefresh(\''+p.id+'\')">Login via Browser (headless)</button></details><br>'
+        + '<button class="teal" onclick="browserLoginRefresh(\''+p.id+'\')">Launch Chrome (manual login)</button></details><br>'
         + '<button class="ghost" onclick="clearCookies(\''+p.id+'\')">Clear session</button>'
         + '<button class="teal" onclick="testLogin(\''+p.id+'\')">Test login</button>'
         + '<button class="ghost" onclick="testNotify(\''+p.id+'\')">Test notification</button>'
@@ -780,15 +782,31 @@ async function pair(){
     m.className="msg ok"; m.textContent="Type this on your phone within ~60s (Linked devices → Link with phone number):  "+j.code;
   }catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
 }
-/* ---------- browser login (headless Chromium, auto-captured session) ---------- */
+/* ---------- browser login (visible Chrome on GUI VPS, auto-captured session) ---------- */
 let browserTimer = null;
+async function browserLaunchNew(){
+  const msg = document.getElementById("browserMsgH");
+  const name = (document.getElementById("fName") || {}).value || "new profile";
+  const em = (document.getElementById("fEmail") || {}).value.trim();
+  // Visible Chrome needs no email/pass — you type there. Only needs a name.
+  browserBegin("new", name || "new profile",
+  async (cookies)=>{
+    const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
+    msg.textContent = "Chrome session captured ("+names.join(", ")+") — now press Add profile (session will be saved).";
+    window._capturedCookies = cookies || {};
+  },
+  (err)=>{ msg.textContent = "Browser login failed: "+err; },
+  msg);
+}
 async function browserBegin(profileId, profileName, onDone, onFail, msgEl, opts){
   opts = opts || {};
   try{
     const creds = (opts.body && opts.body.email && opts.body.password) ? { email: opts.body.email, password: opts.body.password } : null;
-    if(!creds){ msgEl.textContent = "Headless login needs email+password — enter them first."; return; }
-    if(!opts.quiet) msgEl.textContent = "Starting headless browser login…";
-    await api("POST", "/api/browser/headless-start", Object.assign({profileId, profileName}, creds));
+    // No creds -> visible Chrome window on VPS GUI (manual login, captcha OK).
+    // With creds -> headless Chromium form-fill.
+    const endpoint = creds ? "/api/browser/headless-start" : "/api/browser/start";
+    if(!opts.quiet) msgEl.textContent = creds ? "Starting headless browser login…" : "Opening Chrome on your VPS — log in to Naukri inside that window…";
+    await api("POST", endpoint, Object.assign({profileId, profileName}, creds || {}));
     window._onBrowserDone = onDone; window._onBrowserFail = onFail; window._browserMsgEl = msgEl;
     if(browserTimer) clearInterval(browserTimer);
     browserTimer = setInterval(browserPoll, 2500);
@@ -1039,8 +1057,28 @@ async function tabRefreshPoll(id){
   }catch(e){ if(tabRefreshTimer){clearInterval(tabRefreshTimer);tabRefreshTimer=null;} }
 }
 async function browserLoginRefresh(id){
-  // Headless only: persistent Chromium tab on the VPS.
   const m = document.getElementById("m-"+id);
+  let headed = false;
+  try{ const s = await api("GET","/api/browser/status"); headed = !!(s.browser && s.browser.headed); }catch(e){}
+  if(headed){
+    m.textContent = "Opening Chrome on your VPS — log in to Naukri inside that window…";
+    browserBegin(id, "profile",
+    async (cookies)=>{
+      const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
+      m.textContent = "Session captured ("+names.join(", ")+") — saving via headless tab…";
+      try{
+        await api("POST","/api/browser/tab/claim",{profileId:id});
+        m.textContent = "Chrome session saved. Future updates reuse it."; lastSig=""; refresh();
+      }catch(e){
+        // Visible-window capture already stored cookies server-side; claim may just need the tab.
+        m.textContent = "Session captured ("+names.join(", ")+")."; lastSig=""; refresh();
+      }
+    },
+    (err)=>{ m.textContent = "Browser login failed: "+err; },
+    m);
+    return;
+  }
+  // No GUI/Chrome: headless tab
   m.textContent = "Opening headless browser tab…";
   document.getElementById("ao-"+id).style.display = "none";
   window._cardOtpTab = null;

@@ -294,6 +294,11 @@ async function testCredsLogin(email, password) {
   try {
     data = JSON.parse(text);
   } catch {}
+  if (/captcha/i.test(text) || (res.status === 403 && /captchaSiteKey|validRequest/i.test(text))) {
+    throw new Error(
+      "Captcha required: Naukri blocks API password login (403 captcha). Use \"Launch Chrome\" login — log in manually in the Chrome window on your VPS, the session is auto-captured. No typing needed in dashboard."
+    );
+  }
   if (/mfa|otp|verif|two[\s-]?step|two[\s-]?factor|challenge|authenticator|verify/i.test(text)) {
     return {
       status: "otp",
@@ -324,9 +329,14 @@ async function naukriLogin(ctx) {
   storeCookies(ctx.jar, getSetCookies(res));
   const text = await res.text();
   if (!res.ok) {
+    if (/captcha/i.test(text)) {
+      throw new Error(
+        "Captcha required: Naukri blocks API password login (captcha). Use \"Launch Chrome\" login — log in manually in the Chrome window on your VPS, then updates reuse that session without MFA."
+      );
+    }
     if (/mfa|otp|verif|two[\s-]?step|two[\s-]?factor|challenge|authenticator|verify/i.test(text)) {
       throw new Error(
-        `MFA_REQUIRED: this account needs a verification code every fresh login — background password login cannot solve codes. Refresh the session once via Test login (enter code) or Login via Browser (headless), then updates reuse that session without MFA. Server said: ${text.slice(0, 200)}`
+        `MFA_REQUIRED: this account needs a verification code every fresh login — background password login cannot solve codes. Refresh the session once via Test login (enter code) or Launch Chrome login, then updates reuse that session without MFA. Server said: ${text.slice(0, 200)}`
       );
     }
     throw new Error(`Login failed (${res.status}): ${text.slice(0, 300)}`);
@@ -335,7 +345,7 @@ async function naukriLogin(ctx) {
   if (!token) {
     if (/mfa|otp|verif|two[\s-]?step|two[\s-]?factor|challenge|authenticator|verify/i.test(text)) {
       throw new Error(
-        "MFA_REQUIRED: Naukri accepted the password but asked for a verification code instead of a session — refresh the session once via Test login (enter code) or Login via Browser (headless)."
+        "MFA_REQUIRED: Naukri accepted the password but asked for a verification code instead of a session — refresh the session once via Test login (enter code) or Launch Chrome login."
       );
     }
     throw new Error(`Login got no nauk_at cookie — possible OTP block. Response: ${text.slice(0, 300)}`);
@@ -1650,6 +1660,19 @@ const server = http.createServer(async (req, res) => {
       if (settings.whatsapp.enabled) wa.startWhatsApp().catch((e) => log("WHATSAPP init:", e.message));
       log(`WhatsApp settings: ${settings.whatsapp.enabled ? "ON" : "OFF"}${settings.whatsapp.accountName ? ` (${settings.whatsapp.accountName})` : ""}`);
       sendJson(res, 200, { ok: true, whatsapp: settings.whatsapp, wa: wa.getStatus() });
+      return;
+    }
+
+    // POST /api/browser/start — open a real Chrome window on the VPS GUI.
+    // You log in manually (captcha/OTP fine, it's real Chrome).
+    // Session auto-captured. No email/pass typing in the dashboard.
+    if (url === "/api/browser/start" && req.method === "POST") {
+      try {
+        await bl.startBrowserLogin(body.profileId, body.profileName);
+        sendJson(res, 200, { ok: true, started: true, hint: "Log in to Naukri inside the opened Chrome window on your VPS — the session is captured automatically" });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
       return;
     }
 
