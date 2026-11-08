@@ -142,17 +142,12 @@
     <div><label>Profile Name (= CandidateName for files)</label><input id="fName" type="text" placeholder="Sudhir" style="max-width:340px"></div>
     <div id="fPassWrap">
       <div class="row">
-        <div><label>Naukri login email</label><input id="fEmail" type="email" placeholder="you@example.com" oninput="toggleTestCreds()"></div>
-        <div><label>Naukri password</label><input id="fPass" type="password" placeholder="••••••" oninput="toggleTestCreds()"></div>
-      </div>
-      <div class="row" id="fTestCredsWrap" style="display:flex">
-        <div><label>&nbsp;</label><button class="teal" onclick="testCreds()">Test creds</button></div>
-        <div><label>&nbsp;</label><button class="teal" onclick="browserLaunchNew()">Launch Chrome (manual login)</button></div>
+        <div><label>Login</label><button class="teal" onclick="browserLaunchNew()">Launch Chrome (manual login)</button></div>
         <div><label>&nbsp;</label><button class="ghost" onclick="clearAllSessions()">Clear all saved sessions</button></div>
       </div>
       <div id="browserMsgH" class="msg"></div>
       <div id="fOtpWrap" style="display:none">
-        <div class="muted">Account needs 2-step verification — get the code below, OR click "Launch Chrome" to log in manually in the VPS Chrome window (captcha OK).</div>
+        <div class="muted">If Naukri asks for a code, enter it below — or login manually in the Chrome window (captcha OK).</div>
         <div class="row">
           <div><label>Send code to</label><select id="fOtpVia"><option value="mobile">Mobile (SMS)</option><option value="email">Email</option></select></div>
           <div><label>&nbsp;</label><button class="teal" onclick="sendOtpCode()">Send code</button></div>
@@ -163,7 +158,7 @@
         </div>
       </div>
     </div>
-    <div class="muted">Login happens when you press Add profile (headless email+password, no window needed) — if Naukri asks for MFA/captcha, enter the code or click <b>Launch Chrome</b> and log in manually in the Chrome window. The session is then saved and reused, no MFA again until it expires.</div>
+    <div class="muted">Manual Chrome only — no email/password typing. Click <b>Launch Chrome</b> above, log in to Naukri in the Chrome window on your VPS desktop (captcha OK), the session is auto-captured. Then fill name/resume/titles and click <b>Add profile</b>.</div>
   <div class="row">
     <div><label>Resume PDF (verified .pdf → <span class="mono">Name_Resume.pdf</span>)</label><input id="fResume" type="file" accept=".pdf,application/pdf"></div>
       <div><label>Titles .txt (one per line → <span class="mono">Name_Titles.txt</span>)</label><input id="fTitles" type="file" accept=".txt,text/plain"></div>
@@ -526,13 +521,10 @@ async function refresh(){
         + '<label>…or paste new titles (one per line)</label><textarea id="fx-'+p.id+'" class="mono" style="min-height:56px"></textarea>'
         + '<label>New resume PDF (replaces saved resume)</label><input id="fr-'+p.id+'" type="file" accept=".pdf,application/pdf">'
         + '<button class="ghost" onclick="saveFiles(\''+p.id+'\')">Save files</button></details>'
-        + '<details><summary class="muted">Refresh login (email+password / Chrome)</summary>'
-        + '<div class="row"><div><label>Email</label><input id="ae-'+p.id+'" type="email"></div>'
-        + '<div><label>Password</label><input id="aw-'+p.id+'" type="password"></div></div>'
-        + '<div class="muted">Headless login saves the session automatically. If Naukri shows captcha, use Launch Chrome (manual window, captcha OK).</div>'
+        + '<details><summary class="muted">Refresh login (Chrome manual)</summary>'
+        + '<div class="muted">Manual Chrome login only — click below, log in in the VPS Chrome window (captcha OK), session auto-saved.</div>'
         + '<div id="ao-'+p.id+'" style="display:none"><label>Enter the code Naukri sent</label><div class="row"><div><input id="av-'+p.id+'" type="text" inputmode="numeric" placeholder="6-digit code"></div>'
         + '<div><label>&nbsp;</label><button class="teal" onclick="verifyCardOtp(\''+p.id+'\')">Verify code</button></div></div></div>'
-        + '<button class="ghost" onclick="saveAuth(\''+p.id+'\')">Save login</button> '
         + '<button class="teal" onclick="browserLoginRefresh(\''+p.id+'\')">Launch Chrome (manual login)</button></details><br>'
         + '<button class="ghost" onclick="clearCookies(\''+p.id+'\')">Clear session</button>'
         + '<button class="teal" onclick="testLogin(\''+p.id+'\')">Test login</button>'
@@ -552,9 +544,10 @@ async function refresh(){
 }
 /* ---------- actions (session token rides along automatically) ---------- */
 async function addProfile(){
-  const msg = document.getElementById("addMsg"); msg.className="msg"; msg.textContent="Logging in and adding…";
+  const msg = document.getElementById("addMsg"); msg.className="msg"; msg.textContent="Adding profile…";
   try{
     if(!document.getElementById("fTaskTitle").checked && !document.getElementById("fTaskResume").checked){ msg.className="msg err"; msg.textContent="Select at least one task: Title and/or Resume."; return; }
+    if(!window._capturedCookies || !window._capturedCookies.nauk_at){ msg.className="msg err"; msg.textContent="No Chrome session captured — click Launch Chrome above and log in first."; return; }
     const rf = document.getElementById("fResume").files[0];
     const tf = document.getElementById("fTitles").files[0];
     const body = {
@@ -564,19 +557,7 @@ async function addProfile(){
       schedule: readSchedule('f'),
       titlesText: document.getElementById("fTitlesText").value
     };
-    if(window._capturedCookies && window._capturedCookies.nauk_at){
-      body.browserCookies = window._capturedCookies;
-      body.auth = { email: document.getElementById("fEmail").value.trim(), password: document.getElementById("fPass").value };
-    } else {
-      body.auth = { email: document.getElementById("fEmail").value.trim(), password: document.getElementById("fPass").value };
-    }
-    const otpEl = document.getElementById("fOtp");
-    const otpVal = otpEl ? otpEl.value.trim() : "";
-    if(otpVal && document.getElementById("fOtpWrap").style.display !== "none"){
-      body.otp = otpVal;
-      body.via = document.getElementById("fOtpVia").value;
-      body.flowId = window._otpFlow || "";
-    }
+    body.browserCookies = window._capturedCookies;
     if(rf){
       if(!/\.pdf$/i.test(rf.name)){ msg.className="msg err"; msg.textContent='Resume must be a .pdf file (you chose "'+rf.name+'").'; return; }
       body.resumeBase64 = await fileAsBase64(rf); body.resumeName = rf.name;
@@ -590,7 +571,8 @@ async function addProfile(){
     document.getElementById("fOtpWrap").style.display = "none";
     const otpEl2 = document.getElementById("fOtp"); if(otpEl2) otpEl2.value = "";
     window._otpFlow = ""; window._otpMfa = false;
-    ["fName","fEmail","fPass","fTitlesText","fCustomMsg"].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=""; });
+    ["fName","fTitlesText","fCustomMsg"].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=""; });
+    window._capturedCookies = {};
     document.getElementById("fTaskTitle").checked = true; document.getElementById("fTaskResume").checked = true;
     document.getElementById("fResume").value=""; document.getElementById("fTitles").value="";
     lastSig = ""; refresh();
@@ -725,14 +707,6 @@ async function verifyCardOtp(id){
     document.getElementById("av-"+id).value = "";
     document.getElementById("ao-"+id).style.display = "none";
     m.textContent="Code accepted — session saved. Future updates reuse it (no more codes)."; lastSig=""; refresh();
-  }catch(e){ m.textContent="Error: "+e.message; }
-}
-async function saveAuth(id){
-  const m = document.getElementById("m-"+id); m.textContent="Saving login…";
-  try{
-    const auth = { email: document.getElementById("ae-"+id).value.trim(), password: document.getElementById("aw-"+id).value };
-    await api("PUT","/api/profiles/"+id+"/auth",{auth});
-    m.textContent="Login updated (headless)."; lastSig=""; refresh();
   }catch(e){ m.textContent="Error: "+e.message; }
 }
 async function saveTimezone(){
