@@ -94,16 +94,10 @@ function validEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "");
 }
 
-// Normalize auth input into { method: 'password', email, password }.
-// Headless login only: session cookies come from automatic browser capture,
-// never from pasted user cookies (removed).
+// Manual Chrome login only: no email/password stored.
+// Session comes from Chrome capture (saved in profile.session).
 function normalizeAuth(input) {
-  const src = input || {};
-  return {
-    method: "password",
-    email: String(src.email || "").trim(),
-    password: String(src.password || ""),
-  };
+  return { method: "browser", email: "", password: "" };
 }
 
 function parseHM(s) {
@@ -154,8 +148,7 @@ function normalizeSession(s) {
 }
 
 function validateAuth(auth) {
-  if (!validEmail(auth.email)) throw new Error("Valid login email is required");
-  if (!auth.password) throw new Error("Login password is required");
+  // Manual Chrome login: no email/password to validate.
   return auth;
 }
 

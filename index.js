@@ -612,7 +612,7 @@ async function runProfile(p) {
     if (nextTitle) log(`[${p.name}] Next headline #${idx + 1}/${titles.length}`);
     if (resumeExists) log(`[${p.name}] Resume will upload as: ${datedResumeName(prefix)}`);
 
-    const ctx = { jar: createJar(), email: secretEmail(p), password: secretPass(p) };
+    const ctx = { jar: createJar(), email: "", password: "" };
     let bearer = null;
     let profileId = null;
     let reusedSession = false;
@@ -624,14 +624,10 @@ async function runProfile(p) {
       reusedSession = true;
       log(`[${p.name}] reusing saved session (login skipped)`);
     } catch (e) {
-      log(`[${p.name}] no live session (${e.message}) — authenticating fresh`);
+      log(`[${p.name}] no live session (${e.message}) — needs Chrome login`);
     }
     if (!bearer) {
-      if (!ctx.email || !ctx.password) throw new Error("Missing login email/password — refresh login (headless) on the card");
-      bearer = await naukriLogin(ctx);
-      log(`[${p.name}] Login OK`);
-      profileId = await fetchProfileId(ctx, bearer);
-      saveSession(p, ctx.jar, bearer); // remember it so next runs skip login
+      throw new Error("Session dead — click \"Launch Chrome (manual login)\" on the card to log in again (Chrome auto-saves the session)");
     }
 
     let headlineErr = null;
@@ -1205,68 +1201,24 @@ const server = http.createServer(async (req, res) => {
         if (body.titlesBase64) {
           titlesText = Buffer.from(body.titlesBase64, "base64").toString("utf8");
         }
-        // NOTE: profiles.js works in plaintext; seal AFTER validation.
-        let auth = body.auth || { email: body.email, password: body.loginPassword };
-        // Validate auth shape first (throws friendly errors, creates nothing).
-        const preAuth = profiles.buildAuth(auth);
-        // Password adds: login-and-add in one step. A verified OTP
-        // session from the add form (Test creds) counts as the login.
-        // Otherwise we log in live here; if Naukri demands MFA and the
-        // request already carries { otp, via, flowId }, we verify the code
-        // inline and create the profile with the session saved — no
-        // separate "Test creds" step needed.
+        // Manual Chrome only: browserCookies must be present (captured via Launch Chrome).
+        // No email/password typing, no API login (captcha-proof).
+        if (!body.browserCookies || !body.browserCookies.nauk_at) {
+          sendJson(res, 400, { ok: false, error: "No Chrome session captured — click Launch Chrome above, log in to Naukri in the VPS Chrome window, then press Add profile." });
+          return;
+        }
         let liveSession = null; // { jar: Map, bearer }
-        let usedPendingEmail = null;
         {
-          const pending = peekPendingOtp(preAuth.email);
-          if (pending) {
-            const jar = createJar();
-            for (const [k, v] of Object.entries(pending.jar || {})) {
-              if (v) jar.set(k, v);
-            }
-            liveSession = { jar, bearer: pending.bearer };
-            usedPendingEmail = preAuth.email;
-            log(`[${preAuth.email}] using OTP-verified session from add form (no fresh login)`);
-          } else if (body.otp && String(body.otp).trim()) {
-            // Second Add press: user entered the MFA code shown after the
-            // first Add returned needOtp. Verify inline, then create.
-            const via = body.via === "email" ? "email" : "mobile";
-            try {
-              const vr = await naukriVerifyOtp(preAuth.email, String(body.otp).trim(), via, body.flowId || "");
-              liveSession = { jar: vr.jar, bearer: vr.bearer };
-              log(`[${preAuth.email}] MFA code accepted inline — creating profile with session saved`);
-            } catch (e) {
-              sendJson(res, 400, { ok: false, error: "Code rejected: " + e.message + " — re-check the code and press Add profile again." });
-              return;
-            }
-          } else {
-            let r;
-            try {
-              r = await testCredsLogin(preAuth.email, preAuth.password);
-            } catch (e) {
-              sendJson(res, 400, { ok: false, error: "Login test failed: " + e.message });
-              return;
-            }
-            if (r.status === "otp") {
-              const where = r.maskedEmail ? ` (code goes to ${r.medium || "your"} ${r.maskedEmail})` : "";
-              sendJson(res, 400, {
-                ok: false,
-                needOtp: true,
-                mfa: !!r.mfa,
-                flowId: r.flowId || "",
-                medium: r.medium || "",
-                error:
-                  "MFA required" + where +
-                  " — enter the code below and press Add profile again (the login completes and the profile is created with the session saved).",
-              });
-              return;
-            }
-            liveSession = { jar: r.jar, bearer: r.bearer };
+          const jar = createJar();
+          for (const [k, v] of Object.entries(body.browserCookies)) {
+            if (v) jar.set(k, v);
           }
+          liveSession = { jar, bearer: body.browserCookies.nauk_at || "" };
+          log(`[add] using Chrome-captured session (no API login)`);
         }
         const p = profiles.addProfile(reg, {
           name: body.name,
-          auth,
+          auth: {},
           titlesText,
           titlesOrigName: body.titlesName,
           resumeBuffer,
@@ -1277,13 +1229,11 @@ const server = http.createServer(async (req, res) => {
         });
         log(`[${p.name}] profile added (${profiles.readProfileTitles(p).length} titles)`);
         p.auth = sealAuth(p.auth);
-        // Attach the live/verified password session so the first update
-        // reuses it (login skipped, no second MFA challenge).
+        // Attach the Chrome-captured session so the first update reuses it.
         if (liveSession) {
           try {
             saveSession(p, liveSession.jar, liveSession.bearer);
-            if (usedPendingEmail) takePendingOtp(usedPendingEmail); // consume only on success
-            log(`[${p.name}] password session saved at add-time (future runs skip login)`);
+            log(`[${p.name}] Chrome session saved at add-time (future runs skip login)`);
           } catch (e) {
             log(`[${p.name}] could not save add-time session: ${e.message}`);
           }
@@ -1322,16 +1272,9 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // PUT /api/profiles/:id/auth — refresh headless login (email+password)
+    // PUT /api/profiles/:id/auth — no-op (manual Chrome login only; use Launch Chrome to refresh the session)
     if (parts[1] === "profiles" && parts[2] && parts[3] === "auth" && req.method === "PUT") {
-      try {
-        const auth = profiles.buildAuth(body.auth);
-        const p = profiles.setAuth(reg, parts[2], sealAuth(auth));
-        log(`[${p.name}] login updated (headless)`);
-        sendJson(res, 200, { ok: true, profile: publicProfile(p) });
-      } catch (e) {
-        sendJson(res, 400, { ok: false, error: e.message });
-      }
+      sendJson(res, 400, { ok: false, error: "Manual Chrome login only — use \"Launch Chrome\" on the card to refresh the session." });
       return;
     }
 
