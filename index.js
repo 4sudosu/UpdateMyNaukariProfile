@@ -1701,6 +1701,26 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // POST /api/profiles/:id/browser-session — save visible-Chrome captured cookies
+    // Manual Chrome login only. Verifies live + saves as the profile session.
+    if (parts[1] === "profiles" && parts[2] && parts[3] === "browser-session" && req.method === "POST") {
+      try {
+        const p = profiles.getProfile(reg, parts[2]);
+        if (!p) throw new Error("Profile not found");
+        const bc = body.browserCookies || {};
+        if (!bc.nauk_at) throw new Error("No captured cookies — finish logging in to Naukri in Chrome first");
+        const jar = createJar();
+        for (const [k, v] of Object.entries(bc)) { if (v) jar.set(k, v); }
+        const pid = await fetchProfileId({ jar }, bc.nauk_at);
+        saveSession(p, jar, bc.nauk_at);
+        log(`[${p.name}] Chrome session saved (verified live)`);
+        sendJson(res, 200, { ok: true, profileId: pid });
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message });
+      }
+      return;
+    }
+
     // POST /api/browser/tab/claim — pull the live tab session into the profile
     // (verified + saved, so updates reuse it). Called by the dashboard on done.
     if (url === "/api/browser/tab/claim" && req.method === "POST") {

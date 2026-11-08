@@ -1043,14 +1043,11 @@ async function browserLoginRefresh(id){
     browserBegin(id, "profile",
     async (cookies)=>{
       const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
-      m.textContent = "Session captured ("+names.join(", ")+") — saving via headless tab…";
+      m.textContent = "Session captured ("+names.join(", ")+") — saving…";
       try{
-        await api("POST","/api/browser/tab/claim",{profileId:id});
+        await api("POST","/api/profiles/"+id+"/browser-session",{browserCookies:cookies});
         m.textContent = "Chrome session saved. Future updates reuse it."; lastSig=""; refresh();
-      }catch(e){
-        // Visible-window capture already stored cookies server-side; claim may just need the tab.
-        m.textContent = "Session captured ("+names.join(", ")+")."; lastSig=""; refresh();
-      }
+      }catch(e){ m.textContent = "Save failed: "+e.message+" — try Launch Chrome again."; }
     },
     (err)=>{ m.textContent = "Browser login failed: "+err; },
     m);
