@@ -81,7 +81,19 @@ Render's free disk wipes on every redeploy/restart/sleep. Cloud backup fixes tha
 
 ---
 
-## 💻 Run locally
+## 💻 Run locally / on VPS (1 line)
+
+```bash
+WEB_PASSWORD=pick-something-strong bash <(curl -fsSL https://raw.githubusercontent.com/4sudosu/UpdateMyNaukariProfile/master/setup.sh)
+```
+
+This installs Node 20 if needed, clones/updates the repo, runs `npm install`, writes `.env` with your `WEB_PASSWORD`, and prints the start command. Then run:
+
+```bash
+cd UpdateMyNaukariProfile && npm start
+```
+
+Manual equivalent (same steps, split up):
 
 ```bash
 git clone https://github.com/4sudosu/UpdateMyNaukariProfile.git
