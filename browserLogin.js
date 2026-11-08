@@ -124,13 +124,18 @@ async function launchWithFallback(puppeteer, opts) {
   }
 }
 
-// Start a visible-window login on the GUI VPS. You type in Chrome yourself,
-// so Naukri captcha/2-step screens are fine. Session auto-captured.
+// Start a visible-window login. Works on GUI VPS; on a headless VPS it
+// auto-falls-back to Xvfb-backed headless Chromium (captcha still solvable
+// via the OTP dashboard flow — you don't see a window without a desktop).
 async function startBrowserLogin(profileId, profileName) {
   if (active && (active.status === "waiting" || active.status === "otp" || active.status === "filling")) {
     throw new Error(`A browser login is already in progress for "${active.profileName}" — finish or cancel it first`);
   }
   const puppeteer = needPuppeteer();
+  if (!process.env.DISPLAY) {
+    // No X server: visible window can't open. Point to the fix + headless path.
+    throw new Error("No X server (VPS is headless right now). Fix: sudo apt install -y xvfb google-chrome-stable(or chromium) then run the app as: xvfb-run -a npm start — then Launch Chrome works. Without xvfb, use the headless tab login (email+password, OTP in dashboard) on the profile card.");
+  }
   const exe = findChrome();
   if (!exe) {
     throw new Error("No Chrome/Edge found on this VPS. Install Chrome (sudo apt install google-chrome-stable) then retry, or use email+password headless login.");
@@ -392,9 +397,8 @@ let farm = null; // { browser, mode, startedAt }
 const farmTabs = new Map(); // profileId -> { profileId, profileName, context, page, status, cookies, error, startedAt }
 
 function farmMode() {
-  // GUI VPS with Chrome -> visible window (manual captcha/OTP OK).
-  // No Chrome -> headless Chromium (form-fill + OTP via dashboard).
-  return headedCapable() ? "window" : "headless";
+  // Visible window only when a desktop (DISPLAY) exists; headless VPS -> headless Chromium.
+  return (headedCapable() && process.env.DISPLAY) ? "window" : "headless";
 }
 
 async function ensureFarmBrowser() {
