@@ -140,22 +140,14 @@
   <details class="sect"><summary><span>Add Naukri profile</span></summary>
   <div class="card">
     <div><label>Profile Name (= CandidateName for files)</label><input id="fName" type="text" placeholder="Sudhir" style="max-width:340px"></div>
-    <div class="row">
-      <div><label>Link via</label>
-        <select id="fAuth" onchange="toggleAddAuth()">
-          <option value="password">Email + password</option>
-          <option value="cookies">Session cookies (paste below)</option>
-        </select>
-      </div>
-    </div>
     <div id="fPassWrap">
       <div class="row">
-        <div><label>Naukri login email</label><input id="fEmail" type="email" placeholder="you@example.com" oninput="toggleTestCreds()"></div>
+        <div><label>Naukri login email (headless login)</label><input id="fEmail" type="email" placeholder="you@example.com" oninput="toggleTestCreds()"></div>
         <div><label>Naukri password</label><input id="fPass" type="password" placeholder="••••••" oninput="toggleTestCreds()"></div>
       </div>
       <div class="row" id="fTestCredsWrap" style="display:none">
         <div><label>&nbsp;</label><button class="teal" onclick="testCreds()">Test creds</button></div>
-        <div><label>&nbsp;</label><button class="ghost" onclick="clearAllSessions()">Clear all saved cookies</button></div>
+        <div><label>&nbsp;</label><button class="ghost" onclick="clearAllSessions()">Clear all saved sessions</button></div>
       </div>
       <div id="fOtpWrap" style="display:none">
         <div class="muted">This account needs 2-step verification — get the code and enter it below.</div>
@@ -169,30 +161,7 @@
         </div>
       </div>
     </div>
-    <div id="fCookieWrap" style="display:none">
-    <label>Paste session cookies (one line works: <span class="mono">nauk_at=...; nauk_sid=...; nauk_rt=...</span>)</label>
-      <textarea id="fCookieText" class="mono" style="min-height:60px" placeholder="nauk_at=PASTE_HERE; nauk_sid=PASTE_HERE; nauk_rt=PASTE_HERE"></textarea>
-      <div class="row">
-        <div><label>nauk_at (required)</label><input id="fCk1" type="text" placeholder="paste value"></div>
-        <div><label>nauk_sid (recommended)</label><input id="fCk2" type="text" placeholder="paste value"></div>
-        <div><label>nauk_rt (recommended)</label><input id="fCk3" type="text" placeholder="paste value"></div>
-      </div>
-      <details><summary class="muted"><b>How to get session cookies — step by step</b></summary>
-        <div class="muted">
-          <b>Step 1.</b> In Chrome or Edge, log in at <b>naukri.com</b> (Google login works too).<br>
-          <b>Step 2.</b> Press <b>F12</b> → open the <b>Application</b> tab → expand <b>Cookies</b> → click <b>https://www.naukri.com</b>.<br>
-          <b>Step 3.</b> Find <span class="mono">nauk_at</span> → double-click its Value → copy. This one is <b>required</b>.<br>
-          <b>Step 4.</b> Same for <span class="mono">nauk_sid</span> and <span class="mono">nauk_rt</span> (recommended — keeps the session stable).<br>
-          <b>Step 5.</b> Paste everything above as one line (<span class="mono">nauk_at=...; nauk_sid=...; nauk_rt=...</span>) or fill the three boxes.<br>
-          <b>Step 6.</b> Click <b>Add profile</b> — the server verifies the cookies instantly and tells you if they are expired.<br>
-          <b>Later:</b> cookies expire after some days/weeks — when updates start failing, paste fresh ones via <b>“Refresh login”</b> on the profile card.<br><br>
-          Shortcut — paste this in the <b>Console</b> tab and copy the printed lines:<br>
-          <span class="mono">["nauk_at","nauk_sid","nauk_rt"].forEach(n=>{const v=document.cookie.split("; ").find(r=>r.startsWith(n+"="));console.log(n+"="+(v?v.split("=").slice(1).join("="):"(not readable here — copy it from the Application tab)"))});</span><br>
-          Note: if a cookie is HttpOnly, <span class="mono">document.cookie</span> hides it — copy that one from the Application tab in Step 3.
-        </div>
-      </details>
-    </div>
-    <div class="muted">Login happens when you press Add profile — if Naukri asks for MFA, enter the code and press Add again. The session is then saved and reused, no MFA again until it expires.</div>
+    <div class="muted">Headless login only — no cookie pasting. Login happens when you press Add profile — if Naukri asks for MFA, enter the code and press Add again. The session is then saved and reused, no MFA again until it expires.</div>
   <div class="row">
     <div><label>Resume PDF (verified .pdf → <span class="mono">Name_Resume.pdf</span>)</label><input id="fResume" type="file" accept=".pdf,application/pdf"></div>
       <div><label>Titles .txt (one per line → <span class="mono">Name_Titles.txt</span>)</label><input id="fTitles" type="file" accept=".txt,text/plain"></div>
@@ -304,9 +273,6 @@
 <script>
 let lastSig = "";
 const openCards = new Set();
-/* One-click session capture: drag the link to your bookmarks bar, click it
-   while logged in on naukri.com — it copies nauk_at/sid/rt to clipboard. */
-const BMLET = "javascript:(function(){try{var w=['nauk_at','nauk_sid','nauk_rt'],p=document.cookie.split('; '),f={},m=[];w.forEach(function(k){var v=null;for(var i=0;i<p.length;i++){if(p[i].indexOf(k+'=')===0){v=p[i];break}}if(v){f[k]=v}else{m.push(k)}});var ks=Object.keys(f);if(!ks.length){alert('No Naukri session cookies found here. Log in at naukri.com first, then click again.');return}var t=ks.map(function(k){return f[k]}).join('; ');var d=function(){alert('Copied ('+ks.join(', ')+')! Paste it into your Naukri dashboard.'+(m.length?'\nMissing - copy from DevTools Application tab: '+m.join(', '):''))};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(d,function(){prompt('Copy your session:',t)})}else{prompt('Copy your session:',t)}}catch(e){alert('Capture failed: '+e)}})();";
 function showErr(t){ const b=document.getElementById("errBanner"); if(!b) return; if(t){ b.style.display="block"; b.textContent=t; } else { b.style.display="none"; b.textContent=""; } }
 let appliedTheme = "";
 const LS_KEY = "naukri_panel_token";
@@ -431,21 +397,6 @@ function toggleCardNotify(id){
   document.getElementById("ng-"+id).style.display = t==="group"?"block":"none";
   document.getElementById("np-"+id).style.display = t==="personal"?"block":"none";
 }
-function toggleAddAuth(){
-  const t = document.getElementById("fAuth").value;
-  document.getElementById("fPassWrap").style.display = t === "password" ? "block" : "none";
-  document.getElementById("fCookieWrap").style.display = t === "cookies" ? "block" : "none";
-}
-function toggleCardAuth(id){
-  const t = document.getElementById("a-"+id).value;
-  document.getElementById("ap-"+id).style.display = t==="password"?"block":"none";
-  document.getElementById("ac-"+id).style.display = t==="cookies"?"block":"none";
-}
-function toggleAuthTargets(prefix){
-  const t = document.getElementById(prefix+"Auth").value;
-  document.getElementById(prefix+"PassWrap").style.display = t==="password" ? "block" : "none";
-  document.getElementById(prefix+"CookieWrap").style.display = t==="cookies" ? "block" : "none";
-}
 function fileAsBase64(file){
   return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result).split(",")[1]||""); fr.onerror=rej; fr.readAsDataURL(file); });
 }
@@ -533,7 +484,7 @@ async function refresh(){
         + '<summary><div class="sum-head"><b style="font-size:16px">'+esc(p.name)+'</b> '+st+'<span class="sum-toggle">expand</span></div>'
         + '<div class="muted">'+esc(p.email)+'</div>'
         + '<div><span class="pill slate">Title '+(p.titleIndex+1)+' of '+p.titlesTotal+'</span> '
-        + '<span class="pill slate">'+(p.authMethod==="cookies"?"cookies":"email+pass")+'</span> '
+        + '<span class="pill slate">email+pass (headless)</span> '
         + '<span class="pill '+(p.hasSession?"green":"slate")+'">'+(p.hasSession?"session saved":"no session")+'</span> '
         + '<span class="pill slate">'+(p.tasks.title&&p.tasks.resume?"title+resume":p.tasks.title?"title only":"resume only")+'</span> '
         + '<span class="pill indigo">'+esc(p.scheduleText||"Every ?h")+'</span> '
@@ -573,26 +524,15 @@ async function refresh(){
         + '<label>…or paste new titles (one per line)</label><textarea id="fx-'+p.id+'" class="mono" style="min-height:56px"></textarea>'
         + '<label>New resume PDF (replaces saved resume)</label><input id="fr-'+p.id+'" type="file" accept=".pdf,application/pdf">'
         + '<button class="ghost" onclick="saveFiles(\''+p.id+'\')">Save files</button></details>'
-        + '<details><summary class="muted">Refresh login (switch method / re-paste cookies)</summary>'
-        + '<div class="row"><div><label>Method</label><select id="a-'+p.id+'" onchange="toggleCardAuth(\''+p.id+'\')">'
-        + '<option value="password"'+(p.authMethod!=="cookies"?" selected":"")+'>Email + password</option>'
-        + '<option value="cookies"'+(p.authMethod==="cookies"?" selected":"")+'>Session cookies</option>'
-        + '</select></div></div>'
-        + '<div id="ap-'+p.id+'" style="display:'+(p.authMethod==="cookies"?"none":"block")+'"><div class="row">'
-        + '<div><label>Email</label><input id="ae-'+p.id+'" type="email"></div>'
-        + '<div><label>Password</label><input id="aw-'+p.id+'" type="password"></div></div></div>'
-        + '<div id="ac-'+p.id+'" style="display:'+(p.authMethod==="cookies"?"block":"none")+'">'
-        + '<div class="muted">Tip: <b>Login via Browser</b> below opens Edge/Chrome for one-click capture.</div>'
-        + '<label>Paste cookies (nauk_at=...; nauk_sid=...; nauk_rt=...)</label>'
-        + '<textarea id="at-'+p.id+'" class="mono" style="min-height:60px"></textarea>'
-        + '<div class="row"><div><label>nauk_at</label><input id="ak1-'+p.id+'" type="text"></div>'
-        + '<div><label>nauk_sid</label><input id="ak2-'+p.id+'" type="text"></div>'
-        + '<div><label>nauk_rt</label><input id="ak3-'+p.id+'" type="text"></div></div></div>'
+        + '<details><summary class="muted">Refresh login (headless email+password)</summary>'
+        + '<div class="row"><div><label>Email</label><input id="ae-'+p.id+'" type="email"></div>'
+        + '<div><label>Password</label><input id="aw-'+p.id+'" type="password"></div></div>'
+        + '<div class="muted">Headless login only — session is auto-captured by the server browser. Enter a code only if Naukri asks on the next run.</div>'
         + '<div id="ao-'+p.id+'" style="display:none"><label>Enter the code Naukri sent</label><div class="row"><div><input id="av-'+p.id+'" type="text" inputmode="numeric" placeholder="6-digit code"></div>'
         + '<div><label>&nbsp;</label><button class="teal" onclick="verifyCardOtp(\''+p.id+'\')">Verify code</button></div></div></div>'
         + '<button class="ghost" onclick="saveAuth(\''+p.id+'\')">Save login</button> '
-        + '<button class="teal" onclick="browserLoginRefresh(\''+p.id+'\')">Login via Browser</button></details><br>'
-        + '<button class="ghost" onclick="clearCookies(\''+p.id+'\')">Clear cookies</button>'
+        + '<button class="teal" onclick="browserLoginRefresh(\''+p.id+'\')">Login via Browser (headless)</button></details><br>'
+        + '<button class="ghost" onclick="clearCookies(\''+p.id+'\')">Clear session</button>'
         + '<button class="teal" onclick="testLogin(\''+p.id+'\')">Test login</button>'
         + '<button class="ghost" onclick="testNotify(\''+p.id+'\')">Test notification</button>'
         + '<button class="danger" onclick="delProfile(\''+p.id+'\',\''+esc(p.name).replace(/'/g,"")+'\')">Delete</button>'
@@ -615,7 +555,6 @@ async function addProfile(){
     if(!document.getElementById("fTaskTitle").checked && !document.getElementById("fTaskResume").checked){ msg.className="msg err"; msg.textContent="Select at least one task: Title and/or Resume."; return; }
     const rf = document.getElementById("fResume").files[0];
     const tf = document.getElementById("fTitles").files[0];
-    const linkMethod = document.getElementById("fAuth").value;
     const body = {
       name: document.getElementById("fName").value.trim(),
       notify: { type: document.getElementById("fNotify").value, group: document.getElementById("fGroup").value, phone: document.getElementById("fPhone").value, customMsg: document.getElementById("fCustomMsg").value },
@@ -623,23 +562,15 @@ async function addProfile(){
       schedule: readSchedule('f'),
       titlesText: document.getElementById("fTitlesText").value
     };
-    if(linkMethod === "password"){
-      body.auth = { method: "password",
-        email: document.getElementById("fEmail").value.trim(),
-        password: document.getElementById("fPass").value };
-      // Inline MFA: if the code box is visible and filled, send it with Add
-      // so the server verifies the code and creates the profile in one step.
-      const otpEl = document.getElementById("fOtp");
-      const otpVal = otpEl ? otpEl.value.trim() : "";
-      if(otpVal && document.getElementById("fOtpWrap").style.display !== "none"){
-        body.otp = otpVal;
-        body.via = document.getElementById("fOtpVia").value;
-        body.flowId = window._otpFlow || "";
-      }
-    } else {
-      body.auth = { method: "cookies",
-        cookieText: document.getElementById("fCookieText").value,
-        cookies: { nauk_at: document.getElementById("fCk1").value, nauk_sid: document.getElementById("fCk2").value, nauk_rt: document.getElementById("fCk3").value } };
+    body.auth = { email: document.getElementById("fEmail").value.trim(), password: document.getElementById("fPass").value };
+    // Inline MFA: if the code box is visible and filled, send it with Add
+    // so the server verifies the code and creates the profile in one step.
+    const otpEl = document.getElementById("fOtp");
+    const otpVal = otpEl ? otpEl.value.trim() : "";
+    if(otpVal && document.getElementById("fOtpWrap").style.display !== "none"){
+      body.otp = otpVal;
+      body.via = document.getElementById("fOtpVia").value;
+      body.flowId = window._otpFlow || "";
     }
     if(rf){
       if(!/\.pdf$/i.test(rf.name)){ msg.className="msg err"; msg.textContent='Resume must be a .pdf file (you chose "'+rf.name+'").'; return; }
@@ -654,8 +585,7 @@ async function addProfile(){
     document.getElementById("fOtpWrap").style.display = "none";
     const otpEl2 = document.getElementById("fOtp"); if(otpEl2) otpEl2.value = "";
     window._otpFlow = ""; window._otpMfa = false;
-    ["fName","fEmail","fPass","fTitlesText","fCookieText","fCk1","fCk2","fCk3","fCustomMsg"].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=""; });
-    document.getElementById("fAuth").value = "password"; toggleAddAuth();
+    ["fName","fEmail","fPass","fTitlesText","fCustomMsg"].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=""; });
     document.getElementById("fTaskTitle").checked = true; document.getElementById("fTaskResume").checked = true;
     document.getElementById("fResume").value=""; document.getElementById("fTitles").value="";
     lastSig = ""; refresh();
@@ -746,9 +676,9 @@ async function clearLogs(id){
   catch(e){ m.textContent="Error: "+e.message; }
 }
 async function clearCookies(id){
-  if(!confirm("Clear this profile's saved session cookies? Re-link via browser or paste fresh ones afterwards.")) return;
+  if(!confirm("Clear this profile's saved headless session? Log in again via headless browser afterwards.")) return;
   const m = document.getElementById("m-"+id); m.textContent="Clearing…";
-  try{ await api("POST","/api/profiles/"+id+"/clear-cookies",{}); m.textContent="Saved cookies cleared."; lastSig=""; refresh(); }
+  try{ await api("POST","/api/profiles/"+id+"/clear-cookies",{}); m.textContent="Saved session cleared."; lastSig=""; refresh(); }
   catch(e){ m.textContent="Error: "+e.message; }
 }
 async function testLogin(id){
@@ -795,16 +725,9 @@ async function verifyCardOtp(id){
 async function saveAuth(id){
   const m = document.getElementById("m-"+id); m.textContent="Saving login…";
   try{
-    const method = document.getElementById("a-"+id).value;
-    const auth = method==="cookies"
-      ? { method: "cookies",
-          cookieText: document.getElementById("at-"+id).value,
-          cookies: { nauk_at: document.getElementById("ak1-"+id).value, nauk_sid: document.getElementById("ak2-"+id).value, nauk_rt: document.getElementById("ak3-"+id).value } }
-      : { method: "password",
-          email: document.getElementById("ae-"+id).value.trim(),
-          password: document.getElementById("aw-"+id).value };
+    const auth = { email: document.getElementById("ae-"+id).value.trim(), password: document.getElementById("aw-"+id).value };
     await api("PUT","/api/profiles/"+id+"/auth",{auth});
-    m.textContent="Login updated (cookies verified live)."; lastSig=""; refresh();
+    m.textContent="Login updated (headless)."; lastSig=""; refresh();
   }catch(e){ m.textContent="Error: "+e.message; }
 }
 async function saveTimezone(){
@@ -857,15 +780,15 @@ async function pair(){
     m.className="msg ok"; m.textContent="Type this on your phone within ~60s (Linked devices → Link with phone number):  "+j.code;
   }catch(e){ m.className="msg err"; m.textContent="Error: "+e.message; }
 }
-/* ---------- browser login (real Chrome, auto-captured session) ---------- */
+/* ---------- browser login (headless Chromium, auto-captured session) ---------- */
 let browserTimer = null;
 async function browserBegin(profileId, profileName, onDone, onFail, msgEl, opts){
   opts = opts || {};
   try{
     const creds = (opts.body && opts.body.email && opts.body.password) ? { email: opts.body.email, password: opts.body.password } : null;
-    const endpoint = creds ? "/api/browser/headless-start" : "/api/browser/start";
-    if(!opts.quiet) msgEl.textContent = creds ? "Starting server browser login…" : "Opening Chrome — log in to Naukri inside that window…";
-    await api("POST", endpoint, Object.assign({profileId, profileName}, creds || {}));
+    if(!creds){ msgEl.textContent = "Headless login needs email+password — enter them first."; return; }
+    if(!opts.quiet) msgEl.textContent = "Starting headless browser login…";
+    await api("POST", "/api/browser/headless-start", Object.assign({profileId, profileName}, creds));
     window._onBrowserDone = onDone; window._onBrowserFail = onFail; window._browserMsgEl = msgEl;
     if(browserTimer) clearInterval(browserTimer);
     browserTimer = setInterval(browserPoll, 2500);
@@ -905,32 +828,11 @@ async function browserCancel(){
 }
 async function browserHeadlessStartNew(){
   const msg = document.getElementById("browserMsgH");
-  const email = document.getElementById("bhEmail").value.trim();
-  const pass = document.getElementById("bhPass").value;
-  if(!email || !pass){ msg.textContent = "Fill email + password first (used once, never stored)."; return; }
-  const ctx = window._bhProfile || null;
-  const pid = ctx ? ctx.id : "new";
-  const nm = ctx ? "profile" : (document.getElementById("fName").value.trim() || "new profile");
-  msg.textContent = "Starting headless login on the server…";
-  showOtpBox(false);
-  const done = ctx ? async (cookies)=>{
-      const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
-      msg.textContent = "Session captured ("+names.join(", ")+") — saving to card…";
-      try{
-        await api("PUT","/api/profiles/"+ctx.id+"/auth",{auth:{method:"cookies",cookies}});
-        msg.textContent = "Browser session saved (verified live).";
-        window._bhProfile = null; lastSig=""; refresh();
-      }catch(e){ msg.textContent = "Error: "+e.message; }
-    } : (cookies)=>{
-      window._capturedCookies = cookies || {};
-      const names = Object.keys(window._capturedCookies).filter(k=>window._capturedCookies[k]);
-      document.getElementById("fAuth").value = "server"; toggleAddAuth();
-      const note = document.getElementById("fCaptureNote");
-      if(note) note.textContent = "Session captured ("+names.join(", ")+") — press Add profile below to save it.";
-      msg.textContent = "Session captured ("+names.join(", ")+").";
-    };
-  browserBegin(pid, nm, done, (err)=>{ msg.textContent = "Browser login failed: "+err; }, msg, { quiet: true, body: { email, password: pass } })
-    .then(()=>{ document.getElementById("bhPass").value = ""; });
+  if(!msg) return;
+  const email = document.getElementById("bhEmail") ? document.getElementById("bhEmail").value.trim() : "";
+  const pass = document.getElementById("bhPass") ? document.getElementById("bhPass").value : "";
+  // Headless-only: use profile card "Login via Browser (headless)" instead.
+  msg.textContent = "Use a profile card's \"Login via Browser (headless)\" button, or add the profile with email+password.";
 }
 function resetLoginCheck(){
   window._loginChecked = false;
@@ -956,7 +858,7 @@ async function checkServerLogin(){
     window._loginChecked = true;
     const b = document.getElementById("btnCaptureLogin");
     if(b) b.style.display = "";
-    msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ") — now press 2. Login and capture cookies.";
+    msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ") — headless login works, add the profile now.";
   }catch(e){ msg.textContent = "Error: " + e.message; }
 }
 async function browserHeadlessOtp(){
@@ -973,7 +875,7 @@ async function browserHeadlessOtp(){
     window._loginChecked = true;
     const bc = document.getElementById("btnCaptureLogin");
     if(bc) bc.style.display = "";
-    msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ") — now press 2. Login and capture cookies.";
+    msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ") — headless login works, add the profile now.";
     }catch(e){ msg.textContent = "Error: " + e.message; }
     return;
   }
@@ -1033,7 +935,7 @@ async function verifyOtpCode() {
   try {
     const j = await api("POST", "/api/test-creds/verify-otp", { email, otp, via, flowId: window._otpFlow || undefined });
     msg.className = "msg ok"; msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ") — you can add the profile now."
-      + (window._otpMfa ? " Note: this account uses 2-step, so background updates can't enter codes — add it with Login via Browser or session cookies instead of email+password." : "");
+      + (window._otpMfa ? " Note: this account uses 2-step, so background updates can't enter codes — use \"Login via Browser (headless)\" on the profile card." : "");
     document.getElementById("fOtpWrap").style.display = "none";
   } catch (e) {
     msg.className = "msg err"; msg.textContent = "Error: " + e.message;
@@ -1088,20 +990,20 @@ async function verifyOtpCode() {
   try {
     const j = await api("POST", "/api/test-creds/verify-otp", { email, otp, via, flowId: window._otpFlow || undefined });
     msg.className = "msg ok"; msg.textContent = (j.message || "Able to login") + " (Naukri profile " + j.profileId + ") — you can add the profile now."
-      + (window._otpMfa ? " Note: this account uses 2-step, so background updates can't enter codes — use Server login to capture cookies instead." : "");
+      + (window._otpMfa ? " Note: this account uses 2-step, so background updates can't enter codes — use \"Login via Browser (headless)\" on the profile card." : "");
     document.getElementById("fOtpWrap").style.display = "none";
   } catch (e) {
     msg.className = "msg err"; msg.textContent = "Error: " + e.message;
   }
 }
 async function clearAllSessions() {
-  if (!confirm("Clear the browser login session + all profiles' saved cookies? Your WhatsApp link stays untouched.")) return;
+  if (!confirm("Clear the browser login session + all profiles' saved headless sessions? Your WhatsApp link stays untouched.")) return;
   const msg = document.getElementById("addMsg");
-  msg.className = "msg"; msg.textContent = "Clearing saved cookies…";
+  msg.className = "msg"; msg.textContent = "Clearing saved sessions…";
   try {
     const j = await api("POST", "/api/clear-all-sessions", {});
     msg.className = "msg ok";
-    msg.textContent = "Cleared cookies: " + (j.cleared?.join(", ") || "nothing to clear") + ". WhatsApp link untouched.";
+    msg.textContent = "Cleared sessions: " + (j.cleared?.join(", ") || "nothing to clear") + ". WhatsApp link untouched.";
     refresh();
   } catch (e) {
     msg.className = "msg err"; msg.textContent = "Error: " + e.message;
@@ -1137,27 +1039,9 @@ async function tabRefreshPoll(id){
   }catch(e){ if(tabRefreshTimer){clearInterval(tabRefreshTimer);tabRefreshTimer=null;} }
 }
 async function browserLoginRefresh(id){
+  // Headless only: persistent Chromium tab on the VPS.
   const m = document.getElementById("m-"+id);
-  let headed = false;
-  try{ const s = await api("GET","/api/browser/status"); headed = !!(s.browser && s.browser.headed); }catch(e){}
-  if(headed){
-    m.textContent = "Opening login window…";
-    browserBegin(id, "profile",
-    async (cookies)=>{
-      const names = Object.keys(cookies || {}).filter(k=>cookies[k]);
-      m.textContent = "Session captured ("+names.join(", ")+") — saving…";
-      try{
-        await api("PUT","/api/profiles/"+id+"/auth",{auth:{method:"cookies",cookies}});
-        m.textContent = "Browser session saved (verified live)."; lastSig=""; refresh();
-      }catch(e){ m.textContent = "Error: "+e.message; }
-    },
-    (err)=>{ m.textContent = "Browser login failed: "+err; },
-    m);
-    return;
-  }
-  // Server (Render): persistent tab — opens alongside other profiles' tabs,
-  // logs in with the profile's saved email+password, tab stays open.
-  m.textContent = "Opening persistent browser tab…";
+  m.textContent = "Opening headless browser tab…";
   document.getElementById("ao-"+id).style.display = "none";
   window._cardOtpTab = null;
   try{
@@ -1169,7 +1053,6 @@ async function browserLoginRefresh(id){
 /* ---------- boot: nothing visible without login ---------- */
 buildSwatches();
 applyTheme(currentTheme(), false);
-toggleAddAuth(); // email+pass is default
 fetchVersion();
 if(token()){ refresh(); } else { showLogin(); }
 setInterval(refresh,10000); setInterval(tick,1000);

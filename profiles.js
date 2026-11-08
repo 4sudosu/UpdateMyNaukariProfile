@@ -94,40 +94,15 @@ function validEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "");
 }
 
-// Parse a pasted cookie line:  nauk_at=AAA; nauk_sid=BBB; nauk_rt=CCC
-function parseCookieText(text) {
-  const out = {};
-  for (const part of (text || "").split(";")) {
-    const eq = part.indexOf("=");
-    if (eq === -1) continue;
-    const k = part.slice(0, eq).trim();
-    const v = part.slice(eq + 1).trim();
-    if (k && v) out[k] = v;
-  }
-  return out;
-}
-
-// Normalize any auth input into { method, email, password, cookies }.
+// Normalize auth input into { method: 'password', email, password }.
+// Headless login only: session cookies come from automatic browser capture,
+// never from pasted user cookies (removed).
 function normalizeAuth(input) {
   const src = input || {};
-  if (src.method === "cookies") {
-    const merged = Object.assign(parseCookieText(src.cookieText), src.cookies || {});
-    return {
-      method: "cookies",
-      email: "",
-      password: "",
-      cookies: {
-        nauk_at: String(merged.nauk_at || "").trim(),
-        nauk_sid: String(merged.nauk_sid || "").trim(),
-        nauk_rt: String(merged.nauk_rt || "").trim(),
-      },
-    };
-  }
   return {
     method: "password",
     email: String(src.email || "").trim(),
     password: String(src.password || ""),
-    cookies: { nauk_at: "", nauk_sid: "", nauk_rt: "" },
   };
 }
 
@@ -179,12 +154,6 @@ function normalizeSession(s) {
 }
 
 function validateAuth(auth) {
-  if (auth.method === "cookies") {
-    if (!auth.cookies.nauk_at) {
-      throw new Error("nauk_at cookie is required — paste your session cookies (see steps in the dashboard)");
-    }
-    return auth;
-  }
   if (!validEmail(auth.email)) throw new Error("Valid login email is required");
   if (!auth.password) throw new Error("Login password is required");
   return auth;
@@ -349,9 +318,6 @@ function updateSchedule(reg, id, schedule) {
 function clearCookies(reg, id) {
   const p = getProfile(reg, id);
   if (!p) throw new Error("Profile not found");
-  if (p.auth.method === "cookies") {
-    p.auth.cookies = { nauk_at: "", nauk_sid: "", nauk_rt: "" };
-  }
   p.session = normalizeSession(null);
   saveRegistry(reg);
   return p;

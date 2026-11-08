@@ -81,36 +81,6 @@ function captureDone(where) {
   log(`Session captured for ${active.profileName} (${where}) — closing browser`);
 }
 
-// ---------- A) visible window flow (unchanged behavior) ----------
-async function pollLoop() {
-  const deadline = Date.now() + TIMEOUT_MS;
-  while (active && active.status === "waiting") {
-    if (Date.now() > deadline) {
-      active.status = "timeout";
-      active.error = "Timed out after 5 minutes — no Naukri login detected in the opened browser";
-      log(active.error);
-      await closeQuietly();
-      return;
-    }
-    try {
-      const found = await readSessionCookies(active.page);
-      if (found) {
-        active.cookies = found;
-        active.status = "done";
-        captureDone("window");
-        await closeQuietly();
-        return;
-      }
-    } catch {
-      active.status = "closed";
-      active.error = "Browser window was closed before login completed";
-      log(active.error);
-      return;
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-  }
-}
-
 async function launchWithFallback(puppeteer, opts) {
   try {
     return await puppeteer.launch(opts);
@@ -124,33 +94,7 @@ async function launchWithFallback(puppeteer, opts) {
   }
 }
 
-// Start a visible-window login. profileId is informational ("new" when adding).
-async function startBrowserLogin(profileId, profileName) {
-  if (active && (active.status === "waiting" || active.status === "otp" || active.status === "filling")) {
-    throw new Error(`A browser login is already in progress for "${active.profileName}" — finish or cancel it first`);
-  }
-  const puppeteer = needPuppeteer();
-  const exe = findChrome();
-  if (!exe) {
-    throw new Error("No visible browser on this server (needs a screen + Chrome/Edge). Paste the session cookies manually instead.");
-  }
-  if (!fs.existsSync(BROWSER_PROFILE_DIR)) fs.mkdirSync(BROWSER_PROFILE_DIR, { recursive: true });
-  const browser = await launchWithFallback(puppeteer, {
-    executablePath: exe,
-    headless: false,
-    defaultViewport: null,
-    args: ["--start-maximized"],
-    userDataDir: BROWSER_PROFILE_DIR, // persists, so re-login later is often instant
-  });
-  const page = await browser.newPage();
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" }).catch(() => {});
-  active = { mode: "window", profileId: profileId || "new", profileName: profileName || "profile", browser, page, status: "waiting", cookies: null, error: null, startedAt: Date.now() };
-  log(`Browser opened for "${active.profileName}" — log in to Naukri manually in that window`);
-  pollLoop().catch(() => {});
-  return { started: true, mode: "window" };
-}
-
-// ---------- B) headless form-driven flow (servers) ----------
+// ---------- headless form-driven flow (VPS, incl. GUI VPS) ----------
 async function resolveHeadless() {
   const puppeteer = needPuppeteer();
   if (process.platform === "linux") {
@@ -352,12 +296,12 @@ async function submitOtp(code) {
 }
 
 function getBrowserStatus() {
-  if (!active) return { active: false, headed: headedCapable(), chrome: !!findChrome(), mode: null };
+  if (!active) return { active: false, headed: false, chrome: !!findChrome(), mode: null };
   return {
     active: true,
-    headed: headedCapable(),
+    headed: false,
     chrome: !!findChrome(),
-    mode: active.mode || "window",
+    mode: active.mode || "headless",
     profileId: active.profileId,
     profileName: active.profileName,
     status: active.status,
@@ -391,8 +335,8 @@ let farm = null; // { browser, mode, startedAt }
 const farmTabs = new Map(); // profileId -> { profileId, profileName, context, page, status, cookies, error, startedAt }
 
 function farmMode() {
-  // Servers (Render: no screen) run headless; local machines get visible windows.
-  return headedCapable() ? "window" : "headless";
+  // Headless only (works on GUI VPS too — no visible window needed).
+  return "headless";
 }
 
 async function ensureFarmBrowser() {
@@ -406,19 +350,11 @@ async function ensureFarmBrowser() {
   const puppeteer = needPuppeteer();
   const mode = farmMode();
   let browser;
-  if (mode === "headless") {
+  {
     const { executablePath, args } = await resolveHeadless();
     if (!fs.existsSync(HEADLESS_PROFILE_DIR)) fs.mkdirSync(HEADLESS_PROFILE_DIR, { recursive: true });
     browser = await launchWithFallback(puppeteer, {
       executablePath, headless: true, args, userDataDir: HEADLESS_PROFILE_DIR,
-    });
-  } else {
-    const exe = findChrome();
-    if (!exe) throw new Error("No visible browser on this machine.");
-    if (!fs.existsSync(BROWSER_PROFILE_DIR)) fs.mkdirSync(BROWSER_PROFILE_DIR, { recursive: true });
-    browser = await launchWithFallback(puppeteer, {
-      executablePath: exe, headless: false, defaultViewport: null,
-      args: ["--start-maximized"], userDataDir: BROWSER_PROFILE_DIR,
     });
   }
   browser.on("disconnected", () => { farm = null; farmTabs.clear(); log("Farm browser closed — tabs cleared"); });
@@ -598,18 +534,16 @@ function getFarmStatus() {
     try { closed = !t.page || t.page.isClosed(); } catch {}
     tabs.push({ profileId: id, profileName: t.profileName, status: closed ? "closed" : t.status, live: !!(t.cookies && t.cookies.nauk_at), error: t.error });
   }
-  return { running: !!(farm && farm.browser), mode: farm ? farm.mode : farmMode(), headed: headedCapable(), tabs };
+  return { running: !!(farm && farm.browser), mode: farm ? farm.mode : farmMode(), headed: false, tabs };
 }
 
 module.exports = {
-  startBrowserLogin,
   startHeadlessLogin,
   submitOtp,
   getBrowserStatus,
   takeBrowserCookies,
   cancelBrowserLogin,
   findChrome,
-  headedCapable,
   openProfileTab,
   startTabLogin,
   submitTabOtp,

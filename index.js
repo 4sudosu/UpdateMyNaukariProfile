@@ -117,14 +117,10 @@ function log(...args) {
 }
 
 function secretEmail(p) {
-  return p.auth && p.auth.method === "password" && p.auth.email
-    ? safeDecrypt(p.auth.email)
-    : "";
+  return p.auth && p.auth.email ? safeDecrypt(p.auth.email) : "";
 }
 function secretPass(p) {
-  return p.auth && p.auth.method === "password" && p.auth.password
-    ? safeDecrypt(p.auth.password)
-    : "";
+  return p.auth && p.auth.password ? safeDecrypt(p.auth.password) : "";
 }
 
 // Never throws: "" when missing/unreadable (used for display paths).
@@ -140,31 +136,16 @@ function isSealedValue(v) {
   return !!v && String(v).startsWith("enc1:");
 }
 
-// Seal plaintext auth (password creds AND cookie values) for storage.
+// Seal plaintext auth (password creds) for storage.
 // Already-sealed values pass through untouched (never double-wrapped).
+// Headless login only: no pasted cookies to seal.
 function sealAuth(auth) {
   if (!auth) return auth;
-  if (auth.method === "cookies") {
-    const c = auth.cookies || {};
-    const seal = (v) => (v && !isSealedValue(v) ? encryptSecret(v, WEB_PASSWORD) : v || "");
-    return { method: "cookies", email: "", password: "", cookies: { nauk_at: seal(c.nauk_at), nauk_sid: seal(c.nauk_sid), nauk_rt: seal(c.nauk_rt) } };
-  }
   return {
     method: "password",
     email: auth.email && !isSealedValue(auth.email) ? encryptSecret(auth.email, WEB_PASSWORD) : auth.email || "",
     password: auth.password && !isSealedValue(auth.password) ? encryptSecret(auth.password, WEB_PASSWORD) : auth.password || "",
-    cookies: { nauk_at: "", nauk_sid: "", nauk_rt: "" },
   };
-}
-
-// Open sealed cookies back to plaintext (empty stays empty).
-function openCookies(auth) {
-  const c = (auth && auth.cookies) || {};
-  const out = {};
-  for (const k of ["nauk_at", "nauk_sid", "nauk_rt"]) {
-    out[k] = c[k] ? safeDecrypt(c[k]) : "";
-  }
-  return out;
 }
 
 // One-time self-healing: seal any legacy plaintext left by older versions.
@@ -345,7 +326,7 @@ async function naukriLogin(ctx) {
   if (!res.ok) {
     if (/mfa|otp|verif|two[\s-]?step|two[\s-]?factor|challenge|authenticator|verify/i.test(text)) {
       throw new Error(
-        `MFA_REQUIRED: this account needs a verification code every fresh login — background password login cannot solve codes. Refresh the session once via Test login (enter code) or switch to session cookies / Login via Browser, then updates reuse that session without MFA. Server said: ${text.slice(0, 200)}`
+        `MFA_REQUIRED: this account needs a verification code every fresh login — background password login cannot solve codes. Refresh the session once via Test login (enter code) or Login via Browser (headless), then updates reuse that session without MFA. Server said: ${text.slice(0, 200)}`
       );
     }
     throw new Error(`Login failed (${res.status}): ${text.slice(0, 300)}`);
@@ -354,7 +335,7 @@ async function naukriLogin(ctx) {
   if (!token) {
     if (/mfa|otp|verif|two[\s-]?step|two[\s-]?factor|challenge|authenticator|verify/i.test(text)) {
       throw new Error(
-        "MFA_REQUIRED: Naukri accepted the password but asked for a verification code instead of a session — refresh the session once via Test login (enter code) or switch to session cookies / Login via Browser."
+        "MFA_REQUIRED: Naukri accepted the password but asked for a verification code instead of a session — refresh the session once via Test login (enter code) or Login via Browser (headless)."
       );
     }
     throw new Error(`Login got no nauk_at cookie — possible OTP block. Response: ${text.slice(0, 300)}`);
@@ -528,20 +509,11 @@ async function alertSessionDead(p, err) {
   }
 }
 
-// Login/session-looking failures (expired cookies, bad password, OTP blocks).
+// Login/session-looking failures (expired session, bad password, OTP blocks).
 function isAuthError(err) {
   return /login failed|no nauk_at|otp|mfa_required|mfa|verif|unauthor|401|403|forbidden|session|cookie|token|verification code/i.test(
     String((err && err.message) || err || "")
   );
-}
-async function verifyCookiesAuth(auth) {
-  const jar = createJar();
-  for (const [k, v] of Object.entries((auth && auth.cookies) || {})) {
-    if (v) jar.set(k, v);
-  }
-  const bearer = auth && auth.cookies ? auth.cookies.nauk_at : "";
-  if (!bearer) throw new Error("nauk_at cookie is missing");
-  return fetchProfileId({ jar }, bearer);
 }
 
 // Persist a working login so later runs skip the login POST (no MFA/OTP repeats).
@@ -604,7 +576,7 @@ let runQueue = Promise.resolve();
 
 // One full update cycle for a single profile. Returns true on success.
 async function runProfile(p) {
-  const label = `${p.name} (${p.auth.method === "password" ? profiles.maskEmail(safeDecrypt(p.auth.email)) || "password login" : "cookie login"})`;
+  const label = `${p.name} (${profiles.maskEmail(safeDecrypt((p.auth||{}).email)) || "headless login"})`;
   try {
     const titles = profiles.readProfileTitles(p);
     const rPath = profiles.resumePath(p);
@@ -645,19 +617,9 @@ async function runProfile(p) {
       log(`[${p.name}] no live session (${e.message}) — authenticating fresh`);
     }
     if (!bearer) {
-      if (p.auth.method === "cookies") {
-        const ck = openCookies(p.auth);
-        for (const [k, v] of Object.entries(ck)) {
-          if (v) ctx.jar.set(k, v);
-        }
-        bearer = ck.nauk_at || "";
-        if (!bearer) throw new Error("Saved cookies are missing nauk_at — refresh login on the card");
-        log(`[${p.name}] using saved login cookies`);
-      } else {
-        if (!ctx.email || !ctx.password) throw new Error("Missing login email/password — refresh login on the card");
-        bearer = await naukriLogin(ctx);
-        log(`[${p.name}] Login OK`);
-      }
+      if (!ctx.email || !ctx.password) throw new Error("Missing login email/password — refresh login (headless) on the card");
+      bearer = await naukriLogin(ctx);
+      log(`[${p.name}] Login OK`);
       profileId = await fetchProfileId(ctx, bearer);
       saveSession(p, ctx.jar, bearer); // remember it so next runs skip login
     }
@@ -1103,9 +1065,8 @@ function publicProfile(p) {
   return {
     id: p.id,
     name: p.name,
-    email: p.auth.method === "password" ? profiles.maskEmail(safeDecrypt(p.auth.email)) : "cookie login",
-    authMethod: p.auth.method,
-    cookiesSet: p.auth.method === "cookies" ? Object.keys(p.auth.cookies || {}).filter((k) => p.auth.cookies[k]) : [],
+    email: profiles.maskEmail(safeDecrypt((p.auth||{}).email)),
+    authMethod: "password",
     hasSession: !!(p.session && (p.session.bearer || (p.session.cookies && p.session.cookies.nauk_at))),
     titlesTotal: titles.length,
     resumePresent: fs.existsSync(profiles.resumePath(p)),
@@ -1234,8 +1195,8 @@ const server = http.createServer(async (req, res) => {
         if (body.titlesBase64) {
           titlesText = Buffer.from(body.titlesBase64, "base64").toString("utf8");
         }
-        // NOTE: profiles.js works in plaintext; seal AFTER validation + cookie verify.
-        let auth = body.auth || { method: "password", email: body.email, password: body.loginPassword };
+        // NOTE: profiles.js works in plaintext; seal AFTER validation.
+        let auth = body.auth || { email: body.email, password: body.loginPassword };
         // Validate auth shape first (throws friendly errors, creates nothing).
         const preAuth = profiles.buildAuth(auth);
         // Password adds: login-and-add in one step. A verified OTP
@@ -1246,7 +1207,7 @@ const server = http.createServer(async (req, res) => {
         // separate "Test creds" step needed.
         let liveSession = null; // { jar: Map, bearer }
         let usedPendingEmail = null;
-        if (preAuth.method === "password") {
+        {
           const pending = peekPendingOtp(preAuth.email);
           if (pending) {
             const jar = createJar();
@@ -1304,18 +1265,6 @@ const server = http.createServer(async (req, res) => {
           tasks: body.tasks,
           schedule: body.schedule,
         });
-        if (p.auth.method === "cookies") {
-          try {
-            const pid = await verifyCookiesAuth(p.auth);
-            log(`[${p.name}] cookies verified live (Naukri profile ${pid})`);
-          } catch (e) {
-            try {
-              profiles.deleteProfile(reg, p.id);
-            } catch {}
-            sendJson(res, 400, { ok: false, error: "Cookies invalid or expired — re-copy fresh cookies (see steps): " + e.message });
-            return;
-          }
-        }
         log(`[${p.name}] profile added (${profiles.readProfileTitles(p).length} titles)`);
         p.auth = sealAuth(p.auth);
         // Attach the live/verified password session so the first update
@@ -1363,20 +1312,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // PUT /api/profiles/:id/auth — change login method / refresh cookies+password
+    // PUT /api/profiles/:id/auth — refresh headless login (email+password)
     if (parts[1] === "profiles" && parts[2] && parts[3] === "auth" && req.method === "PUT") {
       try {
         const auth = profiles.buildAuth(body.auth);
-        if (auth.method === "cookies") {
-          try {
-            await verifyCookiesAuth(auth);
-          } catch (e) {
-            sendJson(res, 400, { ok: false, error: "Cookies invalid or expired — re-copy fresh cookies (see steps): " + e.message });
-            return;
-          }
-        }
         const p = profiles.setAuth(reg, parts[2], sealAuth(auth));
-        log(`[${p.name}] login updated (${p.auth.method})`);
+        log(`[${p.name}] login updated (headless)`);
         sendJson(res, 200, { ok: true, profile: publicProfile(p) });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e.message });
@@ -1474,20 +1415,7 @@ const server = http.createServer(async (req, res) => {
           log(`[${p.name}] test login OK (saved session live, tab not open)`);
           return;
         } catch {}
-        // 3) stored cookies (verified, no MFA possible)
-        if (p.auth.method === "cookies") {
-          const pid = await verifyCookiesAuth({ method: "cookies", cookies: openCookies(p.auth) });
-          const jar = createJar();
-          const ck = openCookies(p.auth);
-          for (const [k, v] of Object.entries(ck)) {
-            if (v) jar.set(k, v);
-          }
-          saveSession(p, jar, ck.nauk_at);
-          sendJson(res, 200, { ok: true, method: "cookies", profileId: pid });
-          log(`[${p.name}] test login OK`);
-          return;
-        }
-        // 4) nothing live — point at the browser tab, never a password POST
+        // 3) nothing live — point at the browser tab, never a password POST
         throw new Error("No live session — open the browser tab (Login via Browser) to log in. Test login only checks, it never asks Naukri for a fresh login so it can't trigger a code.");
       } catch (e) {
         sendJson(res, 400, { ok: false, error: "Login test failed: " + e.message });
@@ -1503,7 +1431,6 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       try {
-        if (p.auth.method !== "password") throw new Error("Only email+password profiles use codes");
         const email = secretEmail(p);
         if (!email || !body.otp) throw new Error("Email missing or code empty");
         const vr = await naukriVerifyOtp(email, body.otp, body.via === "email" ? "email" : "mobile", body.flowId);
@@ -1589,7 +1516,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // POST /api/clear-all-sessions — wipe saved cookies ONLY (never touches WhatsApp link)
+    // POST /api/clear-all-sessions — wipe saved headless sessions ONLY (never touches WhatsApp link)
     if (url === "/api/clear-all-sessions" && req.method === "POST") {
       try {
         const browserDir = path.join(__dirname, "browser-profile");
@@ -1598,11 +1525,8 @@ const server = http.createServer(async (req, res) => {
           fs.rmSync(browserDir, { recursive: true, force: true });
           cleared.push("browser-profile/");
         }
-        // Also clear any profile's saved cookies + login sessions
+        // Also clear any profile's saved headless sessions
         for (const p of reg.profiles) {
-          if (p.auth.method === "cookies") {
-            p.auth.cookies = { nauk_at: "", nauk_sid: "", nauk_rt: "" };
-          }
           p.session = { bearer: "", savedAt: null, cookies: { nauk_at: "", nauk_sid: "", nauk_rt: "" } };
         }
         profiles.saveRegistry(reg);
@@ -1729,20 +1653,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // POST /api/browser/start — open a real Edge/Chrome window; you log in, cookies auto-captured.
-    // (Local machines only — needs a screen. Servers: paste cookies manually.)
-    if (url === "/api/browser/start" && req.method === "POST") {
-      try {
-        await bl.startBrowserLogin(body.profileId, body.profileName);
-        sendJson(res, 200, { ok: true, started: true, hint: "Log in to Naukri inside the opened window — the session is captured automatically" });
-      } catch (e) {
-        sendJson(res, 400, { ok: false, error: e.message });
-      }
-      return;
-    }
-
-    // POST /api/browser/headless-start — server-side browser login (Render/cloud:
-    // no screen, no pasted cookies). Dashboard sends email+password (used once,
+    // POST /api/browser/headless-start — server-side headless Chromium login
+    // (VPS-friendly, incl. Linux/GUI VPS). Dashboard sends email+password (used once,
     // never stored); headless Chromium submits the Naukri form. If Naukri asks
     // for a code, POST it to /api/browser/otp. Poll /api/browser/status.
     if (url === "/api/browser/headless-start" && req.method === "POST") {
@@ -1788,7 +1700,7 @@ const server = http.createServer(async (req, res) => {
         const p = body.profileId ? profiles.getProfile(reg, body.profileId) : null;
         let email = body.email || "";
         let password = body.password || "";
-        if ((!email || !password) && p && p.auth.method === "password") {
+        if ((!email || !password) && p) {
           email = secretEmail(p);
           password = secretPass(p);
         }
