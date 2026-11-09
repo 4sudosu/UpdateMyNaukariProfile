@@ -526,8 +526,19 @@ function isAuthError(err) {
   );
 }
 
+// After Naukri rotates cookies, nauk_at is the freshest bearer — the stored
+// bearer is stale and write calls fail 401 with a stale one.
+function freshBearer(jar, oldBearer) {
+  try {
+    return (jar && jar.get && jar.get("nauk_at")) || oldBearer || "";
+  } catch {
+    return oldBearer || "";
+  }
+}
+
 // Persist a working login so later runs skip the login POST (no MFA/OTP repeats).
 function saveSession(p, jar, bearer) {
+  bearer = freshBearer(jar, bearer);
   const sealed = {};
   for (const [k, v] of jar.entries()) {
     if (v) sealed[k] = encryptSecret(v, WEB_PASSWORD);
@@ -554,6 +565,9 @@ function openSession(p) {
     if (p.session && p.session.bearer) out.bearer = safeDecrypt(p.session.bearer) || "";
     const c = (p.session && p.session.cookies) || {};
     for (const [k, v] of Object.entries(c)) out.cookies[k] = v ? safeDecrypt(v) : "";
+    // Self-heal old records where the stored bearer drifted from nauk_at
+    // after a rotation (write calls then 401 with the stale bearer).
+    if (out.cookies.nauk_at) out.bearer = out.cookies.nauk_at;
   } catch {
     // corrupted session -> treated as missing
   }
@@ -570,7 +584,10 @@ async function trySavedSession(p) {
     if (v) jar.set(k, v);
   }
   const pid = await fetchProfileId({ jar }, s.bearer); // probe: throws if dead
-  return { bearer: s.bearer, jar, profileId: pid };
+  // Naukri may have rotated nauk_at during the probe — the bearer must match.
+  const bearer = freshBearer(jar, s.bearer);
+  if (bearer !== s.bearer) saveSession(p, jar, bearer);
+  return { bearer, jar, profileId: pid };
 }
 
 // ---------- registry + runtime ----------
