@@ -624,7 +624,26 @@ async function runProfile(p) {
       reusedSession = true;
       log(`[${p.name}] reusing saved session (login skipped)`);
     } catch (e) {
-      log(`[${p.name}] no live session (${e.message}) — authenticating fresh`);
+      log(`[${p.name}] no live saved session (${e.message}) — checking linked browser tab`);
+    }
+    if (!bearer) {
+      // No saved session live, but the Chrome GUI tab may still be linked —
+      // reuse it instead of forcing a password login (which would trigger MFA).
+      try {
+        const t = await bl.checkProfileTab(p.id);
+        if (t.open && t.live && t.cookies && t.cookies.nauk_at) {
+          const jar = createJar();
+          for (const [k, v] of Object.entries(t.cookies)) {
+            if (v) jar.set(k, v);
+          }
+          profileId = await fetchProfileId({ jar }, t.cookies.nauk_at);
+          bearer = t.cookies.nauk_at;
+          ctx.jar = jar;
+          reusedSession = true;
+          saveSession(p, jar, bearer);
+          log(`[${p.name}] reusing live browser tab ("${p.name}" tab stays open)`);
+        }
+      } catch {}
     }
     if (!bearer) {
       if (!ctx.email || !ctx.password) throw new Error("Session dead — click \"Launch Chrome\" on the card to log in again");
@@ -1755,7 +1774,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     // POST /api/profiles/:id/browser-session — save visible-Chrome captured cookies
-    // Manual Chrome login only. Verifies live + saves as the profile session.
+    // Manual Chrome login only. Verifies live + saves as the profile session,
+    // then keeps a farm tab open seeded with it (visited every 5 min).
     if (parts[1] === "profiles" && parts[2] && parts[3] === "browser-session" && req.method === "POST") {
       try {
         const p = profiles.getProfile(reg, parts[2]);
@@ -1767,6 +1787,8 @@ const server = http.createServer(async (req, res) => {
         const pid = await fetchProfileId({ jar }, bc.nauk_at);
         saveSession(p, jar, bc.nauk_at);
         log(`[${p.name}] Chrome session saved (verified live)`);
+        // shortcut: non-blocking — farm tab keeps this login warm every 5 min.
+        bl.openProfileTab(p.id, p.name, bc || undefined).catch(() => {});
         sendJson(res, 200, { ok: true, profileId: pid });
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e.message });
@@ -1956,18 +1978,34 @@ server.listen(PORT, async () => {
     })();
     return;
   }
-  // Session keep-alive: every 60min, visit Naukri like the website does for
-  // each idle profile (homepage touch + dashboard probe, no headline/resume
-  // write). Any cookies Naukri rotates are captured and re-saved, so the
-  // server session stays warm exactly like a logged-in browser tab and
-  // rarely expires (no repeat MFA). Dead sessions are left alone — the next
-  // real run surfaces the expiry + WhatsApp alert. Saves (disk + cloud
-  // backup) happen only when cookies actually changed.
-  const KEEP_ALIVE_MS = 60 * 60 * 1000;
+  // Session keep-alive: every 5min, visit naukri.com like a real logged-in
+  // user — both the HTTP session AND the linked Chrome tab (RDP GUI included),
+  // no headline/resume write. Any cookies Naukri rotates are re-saved, so the
+  // link never expires on its own (no repeat MFA / re-link). Dead sessions
+  // are left alone — the next real run surfaces the expiry + WhatsApp alert.
+  const KEEP_ALIVE_MS = 5 * 60 * 1000;
   async function keepAliveOnce() {
     for (const p of reg.profiles) {
       try {
         if (running[p.id]) continue;
+        // 1) Linked browser tab (Chrome GUI / farm): visit naukri.com in the tab.
+        try {
+          const t = await bl.checkProfileTab(p.id);
+          if (t.open) {
+            const h = await bl.keepAliveFarmTab(p.id);
+            if (h.open && h.live && h.cookies && h.cookies.nauk_at) {
+              const jar = createJar();
+              for (const [k, v] of Object.entries(h.cookies)) {
+                if (v) jar.set(k, v);
+              }
+              await fetchProfileId({ jar }, h.cookies.nauk_at);
+              saveSession(p, jar, h.cookies.nauk_at);
+              log(`[${p.name}] keep-alive OK (Chrome tab visit — link stays warm)`);
+              continue;
+            }
+          }
+        } catch {}
+        // 2) Saved HTTP session: homepage touch + dashboard probe.
         const s = openSession(p);
         if (!s.bearer) continue;
         const jar = createJar();
@@ -1984,12 +2022,18 @@ server.listen(PORT, async () => {
         } else {
           log(`[${p.name}] keep-alive OK (website visit, session still live)`);
         }
+        // Re-open the farm tab seeded with the saved session so a server
+        // restart / RDP disconnect never forces a manual re-link.
+        try {
+          openSession(p).bearer; // probe passed -> session is live
+          await bl.openProfileTab(p.id, p.name, openSession(p).cookies || undefined);
+        } catch {}
       } catch (e) {
         log(`[${p.name}] keep-alive: session not refreshable (${(e && e.message) || e})`);
       }
     }
   }
-  setTimeout(() => keepAliveOnce().catch(() => {}), 5 * 60 * 1000); // first ping 5min after boot
+  setTimeout(() => keepAliveOnce().catch(() => {}), 10 * 1000); // first ping 10s after boot
   setInterval(() => keepAliveOnce().catch(() => {}), KEEP_ALIVE_MS);
   if (reg.profiles.length === 0) {
     log("No profiles yet — open the dashboard at / and add your first Naukri profile");

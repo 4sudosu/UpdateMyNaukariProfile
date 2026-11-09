@@ -53,6 +53,15 @@ function headedCapable() {
   return !!findChrome();
 }
 
+// A visible window needs a desktop: DISPLAY on Linux, or Windows/macOS
+// (RDP included) where DISPLAY is never set. The old DISPLAY-only check
+// blocked Launch Chrome on Windows RDP even with Chrome installed.
+function guiCapable() {
+  if (!headedCapable()) return false;
+  if (process.platform === "win32" || process.platform === "darwin") return true;
+  return !!process.env.DISPLAY;
+}
+
 function needPuppeteer() {
   try {
     return require("puppeteer-core");
@@ -132,9 +141,9 @@ async function startBrowserLogin(profileId, profileName) {
     throw new Error(`A browser login is already in progress for "${active.profileName}" — finish or cancel it first`);
   }
   const puppeteer = needPuppeteer();
-  if (!process.env.DISPLAY) {
-    // No X server: visible window can't open. Point to the fix + headless path.
-    throw new Error("No X server (VPS is headless right now). Fix: sudo apt install -y xvfb google-chrome-stable(or chromium) then run the app as: xvfb-run -a npm start — then Launch Chrome works. Without xvfb, use the headless tab login (email+password, OTP in dashboard) on the profile card.");
+  if (!guiCapable()) {
+    // No desktop: visible window can't open. Point to the fix + headless path.
+    throw new Error("No desktop / X server (machine is headless). Fix on Linux: sudo apt install -y xvfb google-chrome-stable(or chromium) then run the app as: xvfb-run -a npm start — then Launch Chrome works. Without xvfb, use the headless tab login (email+password, OTP in dashboard) on the profile card.");
   }
   const exe = findChrome();
   if (!exe) {
@@ -358,10 +367,10 @@ async function submitOtp(code) {
 }
 
 function getBrowserStatus() {
-  if (!active) return { active: false, headed: headedCapable(), chrome: !!findChrome(), mode: null };
+  if (!active) return { active: false, headed: guiCapable(), chrome: !!findChrome(), mode: null };
   return {
     active: true,
-    headed: headedCapable(),
+    headed: guiCapable(),
     chrome: !!findChrome(),
     mode: active.mode || "headless",
     profileId: active.profileId,
@@ -397,8 +406,8 @@ let farm = null; // { browser, mode, startedAt }
 const farmTabs = new Map(); // profileId -> { profileId, profileName, context, page, status, cookies, error, startedAt }
 
 function farmMode() {
-  // Visible window only when a desktop (DISPLAY) exists; headless VPS -> headless Chromium.
-  return (headedCapable() && process.env.DISPLAY) ? "window" : "headless";
+  // Visible window only when a desktop exists (RDP/Windows included); else headless.
+  return guiCapable() ? "window" : "headless";
 }
 
 async function ensureFarmBrowser() {
@@ -433,7 +442,7 @@ async function ensureFarmBrowser() {
   return farm;
 }
 
-async function openProfileTab(profileId, profileName) {
+async function openProfileTab(profileId, profileName, seedCookies) {
   if (!profileId) throw new Error("profileId is required");
   const f = await ensureFarmBrowser();
   let tab = farmTabs.get(String(profileId));
@@ -449,9 +458,39 @@ async function openProfileTab(profileId, profileName) {
   if (f.mode === "headless") await page.setUserAgent(DESKTOP_UA);
   tab = { profileId: String(profileId), profileName: profileName || "profile", context, page, status: "open", cookies: null, error: null, startedAt: Date.now() };
   farmTabs.set(String(profileId), tab);
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
-  log(`Tab opened for "${tab.profileName}" (${f.mode}) — stays open alongside other profiles`);
+  // Re-seed with the saved session so a server restart / RDP disconnect
+  // never forces a manual re-link — the tab starts already logged in.
+  if (seedCookies && seedCookies.nauk_at) {
+    try {
+      const items = [];
+      for (const [name, value] of Object.entries(seedCookies)) {
+        if (value) items.push({ name, value: String(value), url: "https://www.naukri.com/" });
+      }
+      if (items.length) await page.setCookie(...items);
+      const back = await readTabCookies(tab);
+      if (back) { tab.cookies = back; tab.status = "done"; }
+    } catch {}
+  }
+  await page.goto("https://www.naukri.com/", { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
+  const live = await readTabCookies(tab);
+  if (live) { tab.cookies = live; if (tab.status !== "otp") tab.status = "done"; }
+  log(`Tab opened for "${tab.profileName}" (${f.mode}) — stays open, visited every 5 min to keep the session alive`);
   return { opened: true, reused: false, mode: f.mode, status: tab.status };
+}
+
+// Keep a farm tab warm the way a real user would: visit naukri.com in the
+// tab every 5 min and return whatever cookies Naukri rotated.
+async function keepAliveFarmTab(profileId) {
+  const tab = farmTabs.get(String(profileId));
+  if (!tab || !tab.page || tab.page.isClosed()) return { open: false, live: false, cookies: null };
+  try {
+    await tab.page.goto("https://www.naukri.com/", { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
+    const cookies = await readTabCookies(tab);
+    if (cookies) { tab.cookies = cookies; if (tab.status !== "otp") tab.status = "done"; tab.error = null; }
+    return { open: true, live: !!cookies, cookies };
+  } catch (e) {
+    return { open: true, live: false, cookies: null, error: String((e && e.message) || e).split("\n")[0] };
+  }
 }
 
 async function readTabCookies(tab) {
@@ -604,7 +643,7 @@ function getFarmStatus() {
     try { closed = !t.page || t.page.isClosed(); } catch {}
     tabs.push({ profileId: id, profileName: t.profileName, status: closed ? "closed" : t.status, live: !!(t.cookies && t.cookies.nauk_at), error: t.error });
   }
-  return { running: !!(farm && farm.browser), mode: farm ? farm.mode : farmMode(), headed: headedCapable(), tabs };
+  return { running: !!(farm && farm.browser), mode: farm ? farm.mode : farmMode(), headed: guiCapable(), tabs };
 }
 
 module.exports = {
@@ -617,6 +656,8 @@ module.exports = {
   findChrome,
   headedCapable,
   openProfileTab,
+  keepAliveFarmTab,
+  guiCapable,
   startTabLogin,
   submitTabOtp,
   checkProfileTab,

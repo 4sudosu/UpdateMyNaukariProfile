@@ -18,6 +18,7 @@ Keep your **Naukri.com** profile fresh on autopilot — rotating **Resume Headli
 | 🔁 **Headline rotation** | Cycles `Name_Titles.txt` sequentially, loops forever, never deletes a line |
 | 📄 **Dated resume uploads** | Re-uploads as `Name_Resume_20Sept.pdf` every cycle (delete → upload, like the site) |
 | ☑️ **Per-profile tasks** | Title only, Resume only, or both — editable anytime |
+| 🔗 **Never re-link** | Farm-tab + saved session are visited on **naukri.com every 5 min** (Chrome GUI / RDP included) to stay warm; a server restart re-opens the tab from the saved session — no manual re-link |
 | ⏰ **Smart scheduling** | Every X hours counted from each profile's last update; downtime = single catch-up, never spam |
 | 💬 **WhatsApp alerts** | Free via QR/pairing link — group or personal target per profile, custom message templates, session-expiry warnings |
 | 🎨 **10 themes** | 5 light + 5 dark, applies instantly |
