@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # UpdateMyNaukariProfile — one-line VPS setup (Ubuntu/Debian).
-# Usage: WEB_PASSWORD=your-password bash <(curl -fsSL https://raw.githubusercontent.com/4sudosu/UpdateMyNaukariProfile/master/setup.sh)
+# Usage: WEB_PASSWORD=your-password bash <(curl -fsSL https://raw.githubusercontent.com/4sudosu/UpdateMyNaukariProfile/main/setup.sh)
 set -e
 
 # 1) Node >=18 (install Node 20 if missing/too old)
