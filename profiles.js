@@ -138,16 +138,20 @@ function normalizeTasks(t) {
 }
 
 // Saved login session (sealed cookies + bearer). Reused until it stops working.
+// EVERY cookie Naukri set is kept: the Akamai/device ones (ak_bmsc, bm_sv,
+// bm_mi, nauk_ps, nauk_cs, is_login, nauk_otl, …) travel with the request and
+// dropping them (as older builds did) makes Naukri treat the session as
+// tampered and log it out. Cookies are stored as { name: sealedValue }.
 function normalizeSession(s) {
   const c = (s && s.cookies) || {};
+  const cookies = {};
+  for (const [k, v] of Object.entries(c)) {
+    if (typeof v === "string" && v) cookies[k] = v;
+  }
   return {
     bearer: typeof s?.bearer === "string" ? s.bearer : "",
     savedAt: typeof s?.savedAt === "string" ? s.savedAt : null,
-    cookies: {
-      nauk_at: String(c.nauk_at || ""),
-      nauk_sid: String(c.nauk_sid || ""),
-      nauk_rt: String(c.nauk_rt || ""),
-    },
+    cookies,
   };
 }
 

@@ -171,16 +171,37 @@ function storeCookies(jar, setCookieHeaders) {
   if (!setCookieHeaders) return;
   const arr = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
   for (const header of arr) {
-    const pair = header.split(";")[0];
+    const parts = header.split(";").map((s) => s.trim());
+    const pair = parts[0];
     const eq = pair.indexOf("=");
     if (eq === -1) continue;
     const name = pair.slice(0, eq).trim();
     const value = pair.slice(eq + 1).trim();
-    if (name) jar.set(name, value);
+    if (!name) continue;
+    // Read the expiry attributes: Naukri/Akamai CLEAR cookies with Max-Age=0
+    // (they do exactly that to ak_bmsc/bm_sv/bm_mi on every response). A
+    // cleared cookie must be REMOVED from the jar — keeping the old value (or
+    // an empty one) and re-sending it later is read as bot/cookie-tampering.
+    let maxAge = null;
+    let expires = null;
+    for (const a of parts.slice(1)) {
+      const i = a.indexOf("=");
+      const k = (i === -1 ? a : a.slice(0, i)).trim().toLowerCase();
+      const v = i === -1 ? "" : a.slice(i + 1).trim();
+      if (k === "max-age") maxAge = parseInt(v, 10);
+      else if (k === "expires" && v) expires = Date.parse(v);
+    }
+    const cleared =
+      value === "" ||
+      (Number.isFinite(maxAge) && maxAge <= 0) ||
+      (Number.isFinite(expires) && expires <= Date.now());
+    if (cleared) jar.delete(name);
+    else jar.set(name, value);
   }
 }
 function cookieHeader(jar) {
-  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+  // Never emit an empty pair — a blank cookie value is a bot tell.
+  return [...jar.entries()].filter(([k, v]) => k && v).map(([k, v]) => `${k}=${v}`).join("; ");
 }
 function getSetCookies(res) {
   if (typeof res.headers.getSetCookie === "function") return res.headers.getSetCookie();
@@ -373,24 +394,57 @@ async function fetchProfileId(ctx, bearer) {
   return pid;
 }
 
-// Website touch: GET the Naukri homepage carrying the saved cookies with a
-// real desktop UA, exactly like an open browser tab. Never throws — captures
-// any rotated Set-Cookie headers into the jar so the session stays warm.
-async function touchWebsite(jar) {
+// ---------- session renewal: the heart of "never log out" ----------
+// Naukri's nauk_at (the bearer) is a JWT that lives exactly 60 minutes. The
+// JSON APIs never extend it — but requesting ANY logged-in HTML page with the
+// session cookies makes Naukri re-issue a fresh 60-min nauk_at together with
+// brand-new nauk_rt + nauk_sid (both 360 days). So renewal = one page visit
+// with the cookies, then read the new token back out of the jar.
+// (Verified live: /mnjuser/profile → 200 + new token; the API then answers 200.)
+const SESSION_PAGE = "https://www.naukri.com/mnjuser/profile";
+
+// Expiry of a bearer in ms since epoch, or null when it isn't a readable JWT.
+function tokenExpiresAt(token) {
   try {
-    const res = await fetch("https://www.naukri.com/", {
+    const p = JSON.parse(Buffer.from(String(token).split(".")[1], "base64url").toString("utf8"));
+    return Number.isFinite(p.exp) ? p.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+// Renew when the token is inside `skewMs` of expiry (default 15 min) — or
+// already gone. Opaque (unreadable) tokens are left to the probe to decide.
+function needsRenewal(token, skewMs = 15 * 60 * 1000) {
+  const exp = tokenExpiresAt(token);
+  if (exp === null) return false;
+  return exp - Date.now() <= skewMs;
+}
+
+// Visit the logged-in page with the jar: captures the rotated Set-Cookie
+// headers (fresh nauk_at/nauk_rt/nauk_sid, cleared cookies dropped) and
+// returns { status, token }. Never throws.
+async function renewSession(jar) {
+  try {
+    const res = await fetch(SESSION_PAGE, {
       headers: {
         accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "accept-language": "en-US,en;q=0.9",
-        Cookie: cookieHeader(jar),
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-user": "?1",
+        "upgrade-insecure-requests": "1",
         referer: "https://www.naukri.com/",
         "user-agent": UA,
+        Cookie: cookieHeader(jar),
       },
+      redirect: "manual",
     });
     storeCookies(jar, getSetCookies(res));
     await res.arrayBuffer().catch(() => null); // drain so the socket closes cleanly
+    return { status: res.status, token: jar.get("nauk_at") || "" };
   } catch {
-    // offline / blocked now — the dashboard probe right after decides
+    return { status: 0, token: jar.get("nauk_at") || "" };
   }
 }
 
@@ -543,8 +597,11 @@ function saveSession(p, jar, bearer) {
   for (const [k, v] of jar.entries()) {
     if (v) sealed[k] = encryptSecret(v, WEB_PASSWORD);
   }
+  // The cookie is the source of truth: if Naukri rotated nauk_at during the
+  // run/renewal, persist the NEW token — never the one we started with.
+  const token = (jar && jar.get("nauk_at")) || bearer || "";
   p.session = {
-    bearer: bearer ? encryptSecret(bearer, WEB_PASSWORD) : "",
+    bearer: token ? encryptSecret(token, WEB_PASSWORD) : "",
     savedAt: new Date().toISOString(),
     cookies: {
       nauk_at: sealed.nauk_at || "",
@@ -574,19 +631,46 @@ function openSession(p) {
   return out;
 }
 
-// Try the saved session first (cheap dashboard probe, no login POST).
-// Returns { bearer, jar, profileId } or throws.
+// Try the saved session first (no login POST, so no MFA/captcha).
+// Renewal first when the 60-min token is near/past expiry, and once more if
+// the probe still says 401 — then persist whatever Naukri rotated so the next
+// run starts warm. Returns { bearer, jar, profileId } or throws.
 async function trySavedSession(p) {
   const s = openSession(p);
-  if (!s.bearer) throw new Error("no saved session");
   const jar = createJar();
   for (const [k, v] of Object.entries(s.cookies)) {
     if (v) jar.set(k, v);
   }
-  const pid = await fetchProfileId({ jar }, s.bearer); // probe: throws if dead
+  let bearer = freshBearer(jar, s.bearer);
+  if (!bearer) throw new Error("no saved session");
+  // Renew first when the 60-min token is near/past expiry — one logged-in page
+  // visit makes Naukri re-issue nauk_at + rotate nauk_rt/nauk_sid, so the
+  // probe below runs on a warm session (no password login → no MFA/captcha).
+  if (needsRenewal(bearer)) {
+    const r = await renewSession(jar);
+    if (r.token && r.token !== bearer) log(`[${p.name}] session token renewed (was about to expire)`);
+    bearer = freshBearer(jar, r.token || bearer);
+  }
+  let pid;
+  try {
+    pid = await fetchProfileId({ jar }, bearer); // probe: throws if dead
+  } catch (firstErr) {
+    // Token can lapse between renewal and probe (or a renewal was missed while
+    // the server slept) — refresh once and retry instead of falling back to a
+    // password login (which is what triggers captcha/MFA "logouts").
+    const r = await renewSession(jar);
+    if (r.token && r.token !== bearer) {
+      log(`[${p.name}] probe rejected — renewed the session and retrying`);
+      bearer = r.token;
+      pid = await fetchProfileId({ jar }, bearer);
+    } else {
+      throw firstErr;
+    }
+  }
   // Naukri may have rotated nauk_at during the probe — the bearer must match.
-  const bearer = freshBearer(jar, s.bearer);
-  if (bearer !== s.bearer) saveSession(p, jar, bearer);
+  bearer = freshBearer(jar, bearer);
+  // Keep renewed cookies/tokens on disk even if the update itself fails later.
+  saveSession(p, jar, bearer);
   return { bearer, jar, profileId: pid };
 }
 
@@ -667,6 +751,7 @@ async function runProfile(p) {
       bearer = await naukriLogin(ctx);
       log(`[${p.name}] Login OK`);
       profileId = await fetchProfileId(ctx, bearer);
+      bearer = freshBearer(ctx.jar, bearer); // login/probe may have rotated it
       saveSession(p, ctx.jar, bearer);
     }
 
@@ -674,6 +759,7 @@ async function runProfile(p) {
     let resumeErr = null;
     if (wantTitle) {
       try {
+        bearer = freshBearer(ctx.jar, bearer); // fresh token for the write
         await updateHeadline(ctx, bearer, profileId, nextTitle);
         p.titleIndex = titles.length ? (idx + 1) % titles.length : 0;
         headlineText = nextTitle;
@@ -697,7 +783,7 @@ async function runProfile(p) {
       try {
         const bytes = fs.readFileSync(rPath);
         const datedName = datedResumeName(prefix);
-        const r = await uploadResumeDated(ctx, bearer, profileId, bytes, datedName);
+        const r = await uploadResumeDated(ctx, freshBearer(ctx.jar, bearer), profileId, bytes, datedName);
         p.lastResume = `uploaded as ${r.filename}`;
         resumeFile = r.filename;
         log(`[${p.name}] RESUME: ${p.lastResume}`);
@@ -1997,9 +2083,11 @@ server.listen(PORT, async () => {
   }
   // Session keep-alive: every 5min, visit naukri.com like a real logged-in
   // user — both the HTTP session AND the linked Chrome tab (RDP GUI included),
-  // no headline/resume write. Any cookies Naukri rotates are re-saved, so the
-  // link never expires on its own (no repeat MFA / re-link). Dead sessions
-  // are left alone — the next real run surfaces the expiry + WhatsApp alert.
+  // no headline/resume write. The HTTP leg renews the 60-min nauk_at bearer
+  // (a logged-in page visit makes Naukri re-issue it) whenever it is near
+  // expiry, and any rotated cookies are re-saved, so the link never expires
+  // on its own (no repeat MFA / re-link). Dead sessions are left alone — the
+  // next real run surfaces the expiry + WhatsApp alert.
   const KEEP_ALIVE_MS = 5 * 60 * 1000;
   async function keepAliveOnce() {
     for (const p of reg.profiles) {
@@ -2022,22 +2110,29 @@ server.listen(PORT, async () => {
             }
           }
         } catch {}
-        // 2) Saved HTTP session: homepage touch + dashboard probe.
+        // 2) Saved HTTP session: renew the 60-min token if near expiry, then probe.
         const s = openSession(p);
-        if (!s.bearer) continue;
         const jar = createJar();
         for (const [k, v] of Object.entries(s.cookies || {})) {
           if (v) jar.set(k, v);
         }
+        let bearer = freshBearer(jar, s.bearer);
+        if (!bearer) continue;
         const before = JSON.stringify([...jar.entries()].sort());
-        await touchWebsite(jar); // homepage visit with cookies, like a browser tab
-        await fetchProfileId({ jar }, s.bearer); // dashboard probe, captures rotations
+        if (needsRenewal(bearer, 20 * 60 * 1000)) {
+          const r = await renewSession(jar); // the real keep-alive: fresh 60-min token
+          if (r.token && r.token !== bearer) {
+            bearer = r.token;
+            log(`[${p.name}] keep-alive: renewed session token (fresh 60min)`);
+          }
+        }
+        await fetchProfileId({ jar }, bearer); // dashboard probe, captures rotations
         const after = JSON.stringify([...jar.entries()].sort());
         if (after !== before) {
-          saveSession(p, jar, s.bearer);
-          log(`[${p.name}] keep-alive OK (website visit, fresh cookies re-saved)`);
+          saveSession(p, jar, bearer);
+          log(`[${p.name}] keep-alive OK (page visit, fresh cookies re-saved)`);
         } else {
-          log(`[${p.name}] keep-alive OK (website visit, session still live)`);
+          log(`[${p.name}] keep-alive OK (session still live)`);
         }
         // Re-open the farm tab seeded with the saved session so a server
         // restart / RDP disconnect never forces a manual re-link.

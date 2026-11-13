@@ -81,9 +81,11 @@ async function closeQuietly() {
 async function readSessionCookies(page) {
   const cookies = await page.cookies();
   const map = {};
-  for (const c of cookies) map[c.name] = c.value;
+  // Keep EVERY cookie (Akamai/device ones too) — a captured session without
+  // them is rejected by Naukri as tampered and dies within minutes.
+  for (const c of cookies) if (c && c.name) map[c.name] = c.value;
   if (!map.nauk_at) return null;
-  return { nauk_at: map.nauk_at || "", nauk_sid: map.nauk_sid || "", nauk_rt: map.nauk_rt || "" };
+  return map;
 }
 
 function captureDone(where) {
@@ -497,9 +499,10 @@ async function readTabCookies(tab) {
   try {
     const cookies = await tab.page.cookies();
     const map = {};
-    for (const c of cookies) map[c.name] = c.value;
+    // Full cookie set (see readSessionCookies) — partial captures die fast.
+    for (const c of cookies) if (c && c.name) map[c.name] = c.value;
     if (!map.nauk_at) return null;
-    return { nauk_at: map.nauk_at || "", nauk_sid: map.nauk_sid || "", nauk_rt: map.nauk_rt || "" };
+    return map;
   } catch {
     return null;
   }

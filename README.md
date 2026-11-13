@@ -26,7 +26,15 @@ Keep your **Naukri.com** profile fresh on autopilot — rotating **Resume Headli
 
 ---
 
-## 🆕 What's new (V2.1 — current build)
+## 🆕 What's new (V2.2 — current build)
+
+- 🔁 **Sessions no longer expire (the "logged out again and again" fix)** — Naukri's `nauk_at` bearer lives exactly **60 minutes**; it is now **renewed automatically** by visiting a logged-in page with the saved cookies (Naukri re-issues the token + rotates `nauk_rt`/`nauk_sid`). Renewal runs before every update when the token is near/past expiry, plus once on a 401 retry — so updates run on the saved session forever, never hitting password login → captcha/MFA.
+- 🍪 **Every cookie is kept now** — earlier builds kept only `nauk_at`/`nauk_sid`/`nauk_rt` (dropping `ak_bmsc`, `bm_sv`, `bm_mi`, `nauk_ps`, `is_login`, `nauk_otl`, … on every restart and every browser capture), which Naukri reads as a tampered session and logs out. Cookies Naukri **clears** (`Max-Age=0`) are now removed instead of re-sent as empty values.
+- 🎯 **Bearer always follows the cookie** — the stored token is refreshed whenever Naukri rotates `nauk_at`, instead of replaying a stale copy that answers 401.
+- 🌐 **Old homepage "touch" removed** — it never renewed anything (302) and got the Akamai cookies wiped; the renewal page visit replaces it.
+- 🔄 **Keep-alive renews too** — every 5 minutes each idle profile renews the token via a logged-in page visit (when near expiry), probes with the fresh bearer and re-saves anything rotated; the Chrome farm-tab visit stays.
+
+## 🆕 What's new (V2.1)
 
 - 🖥️ **Server browser login on Render** — headless Chromium logs in with email + password, OTP code entered in the dashboard. No cookie-pasting needed to get started.
 - 🗂️ **Persistent multi-tab browser** — one isolated tab per profile, all stay open side by side; adding a profile opens a new tab without disturbing the others.
@@ -38,7 +46,8 @@ Keep your **Naukri.com** profile fresh on autopilot — rotating **Resume Headli
 
 | Version | Build | Notes |
 |---|---|---|
-| **V2.1** | current | Tab farm, check-only Test-login, hourly keep-alive, version badge |
+| **V2.2** | current | 60-min token auto-renewal (never log out), full cookie set kept, cookie-clearing honoured, bearer follows rotated `nauk_at` |
+| **V2.1** | | Tab farm, check-only Test-login, hourly keep-alive, version badge |
 | **V2.0** | | Headless server login on Render (`@sparticuz/chromium`), dashboard OTP |
 | **V1.0** | old build | API updates, cookie-paste login, visible-window browser login, 90-min keep-alive |
 

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Start Naukri
+Comment=Start Naukri Rotator and open dashboard
+Path=/home/ubuntu/Desktop/UpdateMyNaukariProfile
+Exec=bash -c 'export DISPLAY=:10 XAUTHORITY=/home/ubuntu/.Xauthority; (sleep 3 && xdg-open http://localhost:3000 &) ; npm start'
+Icon=utilities-terminal
+Terminal=true
+Categories=Utility;
