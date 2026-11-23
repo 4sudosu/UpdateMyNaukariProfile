@@ -43,7 +43,7 @@ Keep your **Naukri.com** profile fresh on autopilot — rotating **Resume Headli
 | 🔁 **Headline rotation** | Cycles `Name_Titles.txt` sequentially, loops forever, never deletes a line |
 | 📄 **Dated resume uploads** | Re-uploads as `Name_Resume_<DDMon>.pdf` every cycle (delete → upload, like the site) |
 | ☑️ **Per-profile tasks** | Title only, Resume only, or both — editable anytime |
-| 🔗 **Stay logged in** | Saved session + optional linked Chrome/farm tab kept warm; the background keep-alive never opens or raises a window — open tabs only from the dashboard |
+| 🔗 **Stay logged in** | Saved session + optional linked Chrome/farm tab kept warm; the keep-alive opens its tab only in the background (minimized, never steals focus) — it pops up in front only when you click **Launch Chrome** / **Open tab** |
 | ⏰ **Smart scheduling** | Every X hours counted from each profile's last update; downtime = single catch-up, never spam |
 | 💬 **WhatsApp alerts** | Free via QR/pairing link (Baileys) — group or personal target per profile, custom message templates, session-expiry warnings |
 | 🎨 **10 themes** | 5 light + 5 dark, applies instantly |
@@ -62,7 +62,7 @@ Keep your **Naukri.com** profile fresh on autopilot — rotating **Resume Headli
 - 🌐 **Old homepage "touch" removed** — replaced by a real logged-in page renewal (the homepage visit didn't extend the token and could disrupt Akamai cookies).
 - 🔄 **5-minute keep-alive (merged with V2.1 tab-farm)** — every **5 minutes**, for each idle profile:
   1. **Linked Chrome/farm tab (if live):** visit Naukri in the tab, capture cookies, probe and re-save the session.
-  2. **Saved HTTP session:** renew the 60-min token when near expiry (**20-min skew**) via a logged-in page visit, probe the dashboard with the fresh bearer, and re-save if anything rotated. The loop only visits farm tabs that are **already open** — it never launches or raises a Chrome window (open tabs from the dashboard: **Launch Chrome** / **Open tab**).
+  2. **Saved HTTP session:** renew the 60-min token when near expiry (**20-min skew**) via a logged-in page visit, probe the dashboard with the fresh bearer, and re-save if anything rotated. If the session is live, the farm tab is re-opened/seeded from it — but always **in the background**: the window is minimized the moment it appears and is never raised or focused, so it never covers your work (open tabs from the dashboard — **Launch Chrome** / **Open tab** — to see it: that un-minimizes and raises it).
 
 ### V2.1
 - 🖥️ Server browser login on Render — headless Chromium logs in with email+password; OTP entered in the dashboard.
@@ -101,7 +101,7 @@ Keep your **Naukri.com** profile fresh on autopilot — rotating **Resume Headli
    - Per profile, on its schedule (and/or "Update now"): optionally rotates the next headline from `Name_Titles.txt` and/or uploads a dated resume `Name_Resume_<DDMon>.pdf` via Naukri's own web endpoints (same calls the site makes). Runs are serialized to avoid overlapping sessions.
 
 4. **Keep-alive**
-   - A background loop runs every **5 minutes** (first ping ~10s after boot): visits linked Chrome/farm tabs **that are already open** (never launches or raises a window), and renews/probes the saved HTTP session when the bearer is near expiry, re-saving any rotated cookies. Chrome windows open only via explicit dashboard actions (**Launch Chrome**, **Open tab**, tab login).
+   - A background loop runs every **5 minutes** (first ping ~10s after boot): visits linked Chrome/farm tabs and re-open/seed them if missing — but only **in the background** (window minimized on launch, never raised or focused — it never covers your work); also renews/probes the saved HTTP session when the bearer is near expiry, re-saving any rotated cookies. Chrome appears in front only via explicit dashboard actions (**Launch Chrome**, **Open tab**, tab login), which un-minimize + raise the window.
 
 5. **Notifications & persistence**
    - WhatsApp alerts (optional) are sent via Baileys. On Render's ephemeral disk, enable **Upstash cloud backup** (or a persistent disk) to survive restarts/redeploys.

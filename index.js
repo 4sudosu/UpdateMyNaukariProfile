@@ -2088,9 +2088,10 @@ server.listen(PORT, async () => {
   // expiry, and any rotated cookies are re-saved, so the link never expires
   // on its own (no repeat MFA / re-link). Dead sessions are left alone — the
   // next real run surfaces the expiry + WhatsApp alert.
-  // NOTE: this loop NEVER launches or raises a Chrome window — it only
-  // visits tabs that are already open. Windows open only on an explicit
-  // dashboard action (Launch Chrome / Open tab / tab login).
+  // NOTE: this loop may open the farm tab, but only IN THE BACKGROUND —
+  // the window is minimized on launch and never raised or focused. It
+  // pops up in front only on an explicit dashboard action (Launch Chrome /
+  // Open tab / tab login), which un-minimizes + raises it.
   const KEEP_ALIVE_MS = 5 * 60 * 1000;
   async function keepAliveOnce() {
     for (const p of reg.profiles) {
@@ -2137,10 +2138,13 @@ server.listen(PORT, async () => {
         } else {
           log(`[${p.name}] keep-alive OK (session still live)`);
         }
-        // NOTE: no bl.openProfileTab() here on purpose — the background loop
-        // must NEVER launch or raise a Chrome window (it popped up over the
-        // user's work). Tabs are only opened from dashboard actions (Launch
-        // Chrome / Open tab); an already-open tab is visited in step 1 above.
+        // Open the farm tab in the BACKGROUND when it's missing (server
+        // restart or the window was closed): the window matters for keeping
+        // the link visible, but it must never appear in front — it is
+        // minimized the moment it shows and never raised/focused from here.
+        try {
+          await bl.openProfileTab(p.id, p.name, openSession(p).cookies || undefined, { background: true });
+        } catch {}
       } catch (e) {
         log(`[${p.name}] keep-alive: session not refreshable (${(e && e.message) || e})`);
       }

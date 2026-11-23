@@ -14,6 +14,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { exec } = require("child_process");
 
 const BROWSER_PROFILE_DIR = path.join(__dirname, "browser-profile");
 const HEADLESS_PROFILE_DIR = path.join(__dirname, "browser-profile-headless");
@@ -60,6 +61,64 @@ function guiCapable() {
   if (!headedCapable()) return false;
   if (process.platform === "win32" || process.platform === "darwin") return true;
   return !!process.env.DISPLAY;
+}
+
+// ---------- background window control (auto-opens must never steal focus) ----------
+// The keep-alive opens/keeps the farm window, but it must appear in the
+// BACKGROUND: minimized, never raised, never focused. Explicit dashboard
+// actions (Launch Chrome / Open tab / tab login) do the opposite: un-minimize
+// + raise + focus. X11 only; best effort (no tools / no display = no-op).
+function sh(cmd, timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    try {
+      exec(cmd, { timeout: timeoutMs }, (err, stdout) => resolve(err ? "" : String(stdout || "")));
+    } catch {
+      resolve("");
+    }
+  });
+}
+
+// X window ids owned by this browser process (wmctrl first, xdotool fallback).
+async function windowIdsForPid(pid) {
+  if (process.platform !== "linux" || !process.env.DISPLAY || !pid) return [];
+  const out = await sh("wmctrl -lp 2>/dev/null");
+  const ids = out
+    .split("\n")
+    .map((l) => l.trim().split(/\s+/))
+    .filter((c) => c.length >= 3 && Number(c[2]) === pid)
+    .map((c) => c[0]);
+  if (ids.length) return ids;
+  const xd = await sh(`xdotool search --all --pid ${pid} 2>/dev/null`);
+  return xd.split(/\s+/).filter(Boolean);
+}
+
+// Minimize the browser's window the moment it appears: xdotool --sync blocks
+// in X until a window with this PID exists, then hides it — typically before
+// the WM finishes focusing it (verified on this XFCE/xrdp desktop: window
+// ends Iconic/_NET_WM_STATE_HIDDEN and focus never leaves the user's window).
+function minimizeWhenShown(pid) {
+  if (process.platform !== "linux" || !process.env.DISPLAY || !pid) return;
+  sh(
+    `W=$(xdotool search --sync --all --pid ${pid} 2>/dev/null | head -8); ` +
+      `for id in $W; do xdotool windowminimize "$id" 2>/dev/null; done; ` +
+      `sleep 1.5; ` + // second pass in case the WM re-mapped/focused it
+      `for id in $(wmctrl -lp 2>/dev/null | awk -v p=${pid} '$3==p {print $1}'); do wmctrl -i -r "$id" -b add,hidden 2>/dev/null; done`,
+    20000
+  ).catch(() => {});
+}
+
+// Undo the background state for a user-initiated open: un-minimize, raise,
+// focus — so clicking "Open tab" in the dashboard actually shows the window.
+async function raiseBrowserWindow(browser) {
+  if (process.platform !== "linux" || !process.env.DISPLAY) return;
+  let pid = null;
+  try {
+    pid = browser && browser.process ? (browser.process() || {}).pid : null;
+  } catch {}
+  if (!pid) return;
+  for (const id of await windowIdsForPid(pid)) {
+    await sh(`wmctrl -i -r ${id} -b remove,hidden 2>/dev/null; wmctrl -i -a ${id} 2>/dev/null; xdotool windowactivate ${id} 2>/dev/null`);
+  }
 }
 
 function needPuppeteer() {
@@ -412,7 +471,8 @@ function farmMode() {
   return guiCapable() ? "window" : "headless";
 }
 
-async function ensureFarmBrowser() {
+async function ensureFarmBrowser(opts) {
+  const background = !!(opts && opts.background);
   if (farm && farm.browser) {
     try {
       if (farm.browser.connected) return farm;
@@ -440,17 +500,30 @@ async function ensureFarmBrowser() {
   }
   browser.on("disconnected", () => { farm = null; farmTabs.clear(); log("Farm browser closed — tabs cleared"); });
   farm = { browser, mode, startedAt: Date.now() };
-  log(`Farm browser open (${mode}) — stays open, one tab per profile`);
+  log(`Farm browser open (${mode}${background ? ", background — stays minimized" : ""}) — stays open, one tab per profile`);
+  // Background launch (keep-alive): hide the window the moment it appears so
+  // it never pops up in front of the user's work.
+  if (mode === "window" && background) {
+    let pid = null;
+    try { pid = (browser.process() || {}).pid; } catch {}
+    if (pid) minimizeWhenShown(pid);
+  }
   return farm;
 }
 
-async function openProfileTab(profileId, profileName, seedCookies) {
+async function openProfileTab(profileId, profileName, seedCookies, opts) {
+  const background = !!(opts && opts.background);
   if (!profileId) throw new Error("profileId is required");
-  const f = await ensureFarmBrowser();
+  const f = await ensureFarmBrowser({ background });
   let tab = farmTabs.get(String(profileId));
   try {
     if (tab && tab.page && !tab.page.isClosed()) {
-      await tab.page.bringToFront().catch(() => {});
+      if (!background) {
+        // User asked for the tab: show it (un-minimize + raise + focus).
+        await raiseBrowserWindow(f.browser);
+        await tab.page.bringToFront().catch(() => {});
+      }
+      // Background (keep-alive): reuse silently — never raise or focus.
       return { opened: false, reused: true, mode: f.mode, status: tab.status };
     }
   } catch {}
@@ -476,7 +549,10 @@ async function openProfileTab(profileId, profileName, seedCookies) {
   await page.goto("https://www.naukri.com/", { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
   const live = await readTabCookies(tab);
   if (live) { tab.cookies = live; if (tab.status !== "otp") tab.status = "done"; }
-  log(`Tab opened for "${tab.profileName}" (${f.mode}) — stays open, visited every 5 min to keep the session alive`);
+  // Foreground (user click): show the window even if a background open had
+  // minimized it earlier. Background keeps it hidden.
+  if (!background) await raiseBrowserWindow(f.browser);
+  log(`Tab opened for "${tab.profileName}" (${f.mode}${background ? ", background" : ""}) — stays open, visited every 5 min to keep the session alive`);
   return { opened: true, reused: false, mode: f.mode, status: tab.status };
 }
 
