@@ -2082,12 +2082,15 @@ server.listen(PORT, async () => {
     return;
   }
   // Session keep-alive: every 5min, visit naukri.com like a real logged-in
-  // user — both the HTTP session AND the linked Chrome tab (RDP GUI included),
-  // no headline/resume write. The HTTP leg renews the 60-min nauk_at bearer
+  // user — both the HTTP session AND any already-open Chrome tab, no
+  // headline/resume write. The HTTP leg renews the 60-min nauk_at bearer
   // (a logged-in page visit makes Naukri re-issue it) whenever it is near
   // expiry, and any rotated cookies are re-saved, so the link never expires
   // on its own (no repeat MFA / re-link). Dead sessions are left alone — the
   // next real run surfaces the expiry + WhatsApp alert.
+  // NOTE: this loop NEVER launches or raises a Chrome window — it only
+  // visits tabs that are already open. Windows open only on an explicit
+  // dashboard action (Launch Chrome / Open tab / tab login).
   const KEEP_ALIVE_MS = 5 * 60 * 1000;
   async function keepAliveOnce() {
     for (const p of reg.profiles) {
@@ -2134,12 +2137,10 @@ server.listen(PORT, async () => {
         } else {
           log(`[${p.name}] keep-alive OK (session still live)`);
         }
-        // Re-open the farm tab seeded with the saved session so a server
-        // restart / RDP disconnect never forces a manual re-link.
-        try {
-          openSession(p).bearer; // probe passed -> session is live
-          await bl.openProfileTab(p.id, p.name, openSession(p).cookies || undefined);
-        } catch {}
+        // NOTE: no bl.openProfileTab() here on purpose — the background loop
+        // must NEVER launch or raise a Chrome window (it popped up over the
+        // user's work). Tabs are only opened from dashboard actions (Launch
+        // Chrome / Open tab); an already-open tab is visited in step 1 above.
       } catch (e) {
         log(`[${p.name}] keep-alive: session not refreshable (${(e && e.message) || e})`);
       }
